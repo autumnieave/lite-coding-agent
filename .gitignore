@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 打包 / 分发
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# 测试与缓存
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# 运行期状态（约束存储等）
+.lite-agent/
+
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 本地私有材料（不进仓库，只有本机有）
+private/
+
+# 训练 / 评测大文件：数据、adapter、trace、Kaggle 拉取与临时打包
+*.jsonl
+!docs/evidence/*.jsonl
+!docs/evidence/**/*.jsonl
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.whl
+traces/
+kaggle_pull_*/
+tmp_*/
+**/wheel/
