@@ -1,0 +1,357 @@
+"""LLM Provider 抽象。
+
+把厂商差异挡在 core 之外：上层只依赖 `BaseProvider.chat()` 与 `LLMResponse`。
+当前只实现 OpenAI 兼容协议（覆盖 OpenAI / DeepSeek / Moonshot 等），
+因此消息结构沿用 OpenAI 的 role/content/tool_calls 形态。
+"""
+
+from __future__ import annotations
+
+import contextlib
+import inspect
+import os
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any
+
+from openai import AsyncOpenAI
+
+DEFAULT_MODEL = "gpt-4o-mini"
+
+ENV_API_KEY = "LLM_API_KEY"
+ENV_BASE_URL = "LLM_BASE_URL"
+ENV_MODEL = "LLM_MODEL"
+
+
+class LLMError(RuntimeError):
+    """LLM 调用失败。"""
+
+
+class LLMConfigError(LLMError):
+    """缺少或非法配置。"""
+
+
+TextCallback = Callable[[str], None]
+"""流式输出时接收增量文本的回调。"""
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCall:
+    """模型请求的一次工具调用。arguments 是未经解析的原始 JSON 字符串。"""
+
+    id: str
+    name: str
+    arguments: str
+
+
+@dataclass(frozen=True, slots=True)
+class LLMResponse:
+    """一次 LLM 调用的结果。"""
+
+    content: str
+    tool_calls: tuple[ToolCall, ...] = ()
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def has_tool_calls(self) -> bool:
+        return bool(self.tool_calls)
+
+
+def system_message(content: str) -> dict[str, Any]:
+    return {"role": "system", "content": content}
+
+
+def user_message(content: str) -> dict[str, Any]:
+    return {"role": "user", "content": content}
+
+
+def assistant_message(content: str, tool_calls: Sequence[ToolCall] = ()) -> dict[str, Any]:
+    message: dict[str, Any] = {"role": "assistant", "content": content or ""}
+    if tool_calls:
+        message["tool_calls"] = [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {"name": call.name, "arguments": call.arguments},
+            }
+            for call in tool_calls
+        ]
+    return message
+
+
+def tool_result_message(tool_call_id: str, content: str) -> dict[str, Any]:
+    return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
+
+
+class BaseProvider(ABC):
+    """LLM 提供方接口。"""
+
+    @abstractmethod
+    async def chat(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        tools: Sequence[Mapping[str, Any]] | None = None,
+    ) -> LLMResponse:
+        """发送对话历史，返回模型回复。失败抛 `LLMError`。"""
+
+    async def chat_stream(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        tools: Sequence[Mapping[str, Any]] | None = None,
+        on_text: TextCallback | None = None,
+    ) -> LLMResponse:
+        """流式对话：边生成边把增量文本交给 `on_text`。
+
+        默认实现退化为非流式调用，拿到完整结果后一次性回调，
+        这样只实现 `chat` 的 Provider（含测试替身）也能被上层按流式接口统一调用。
+        """
+        response = await self.chat(messages, tools=tools)
+        if on_text is not None and response.content:
+            on_text(response.content)
+        return response
+
+    async def aclose(self) -> None:
+        """释放底层连接。默认无事可做，持有连接池的实现应当覆盖。"""
+        return None
+
+
+async def _close_stream(stream: Any) -> None:
+    """显式关闭 SSE 流。
+
+    不关的话，事件循环退出时 httpcore 还在回收 async generator，
+    会在 stderr 上抛「generator didn't stop after athrow()」这类噪音。
+    """
+    close = getattr(stream, "close", None)
+    if close is None:
+        return
+    with contextlib.suppress(Exception):
+        result = close()
+        if inspect.isawaitable(result):
+            await result
+
+
+def _merge_tool_call(accumulator: dict[int, dict[str, str]], raw: Any) -> None:
+    """拼装流式返回的 tool_call 分片。
+
+    OpenAI 兼容协议里首个分片带 id 与函数名，后续分片只补 arguments，
+    因此必须按 index 累加，覆盖式赋值会把参数丢掉。
+    """
+    index = getattr(raw, "index", 0) or 0
+    function = getattr(raw, "function", None)
+    slot = accumulator.get(index)
+    if slot is None:
+        accumulator[index] = {
+            "id": getattr(raw, "id", "") or "",
+            "name": (getattr(function, "name", "") or "") if function else "",
+            "arguments": (getattr(function, "arguments", "") or "") if function else "",
+        }
+        return
+    arguments = (getattr(function, "arguments", None) or "") if function else ""
+    if arguments:
+        slot["arguments"] += arguments
+
+
+class OpenAICompatProvider(BaseProvider):
+    """OpenAI 兼容协议的 Provider。"""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str = DEFAULT_MODEL,
+        base_url: str | None = None,
+        timeout: float = 60.0,
+        client: AsyncOpenAI | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        seed: int | None = None,
+    ) -> None:
+        if not api_key or not api_key.strip():
+            raise LLMConfigError(f"{ENV_API_KEY} 为空")
+        self.model = model
+        self.base_url = base_url
+        self.temperature = temperature
+        self.top_p = top_p
+        self.seed = seed
+        self._client = client or AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+
+    @property
+    def sampling_config(self) -> dict[str, Any]:
+        """本次 Provider 使用的采样参数。默认全为 None 时 payload 与旧版一致。"""
+        return {
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "seed": self.seed,
+            "is_default": self.temperature is None and self.top_p is None and self.seed is None,
+        }
+
+    @classmethod
+    def from_env(
+        cls,
+        environ: Mapping[str, str] | None = None,
+        *,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        seed: int | None = None,
+    ) -> OpenAICompatProvider:
+        """从环境变量构造。缺少 LLM_API_KEY 时抛 `LLMConfigError`。"""
+        env = os.environ if environ is None else environ
+        api_key = (env.get(ENV_API_KEY) or "").strip()
+        if not api_key:
+            raise LLMConfigError(
+                f"缺少环境变量 {ENV_API_KEY}。请先设置 {ENV_API_KEY}，"
+                f"可选设置 {ENV_BASE_URL} 与 {ENV_MODEL}。"
+            )
+        base_url = (env.get(ENV_BASE_URL) or "").strip() or None
+        model = (env.get(ENV_MODEL) or "").strip() or DEFAULT_MODEL
+        return cls(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            temperature=temperature,
+            top_p=top_p,
+            seed=seed,
+        )
+
+    def _payload(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        *,
+        tools: Sequence[Mapping[str, Any]] | None = None,
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        """按需拼请求 payload。采样参数为 None 时不写键，保持旧请求逐字节不变。"""
+        payload: dict[str, Any] = {"model": self.model, "messages": list(messages)}
+        if tools:
+            payload["tools"] = list(tools)
+        if stream:
+            payload["stream"] = True
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
+        if self.seed is not None:
+            payload["seed"] = self.seed
+        return payload
+
+    async def chat(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        tools: Sequence[Mapping[str, Any]] | None = None,
+    ) -> LLMResponse:
+        payload = self._payload(messages, tools=tools)
+        try:
+            response = await self._client.chat.completions.create(**payload)
+        except Exception as exc:
+            raise LLMError(f"调用 LLM 失败：{type(exc).__name__}: {exc}") from exc
+        return self._to_response(response)
+
+    async def chat_stream(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        tools: Sequence[Mapping[str, Any]] | None = None,
+        on_text: TextCallback | None = None,
+    ) -> LLMResponse:
+        """逐个分片读取回复，边读边回调。
+
+        没有 `on_text` 时直接走非流式：既省掉分片拼装，也保证既有链路行为不变。
+        """
+        if on_text is None:
+            return await self.chat(messages, tools=tools)
+
+        payload = self._payload(messages, tools=tools, stream=True)
+
+        chunks: list[str] = []
+        accumulator: dict[int, dict[str, str]] = {}
+        response_metadata: dict[str, Any] = {}
+        try:
+            stream = await self._client.chat.completions.create(**payload)
+            try:
+                async for chunk in stream:
+                    response_metadata.update(self._response_metadata(chunk))
+                    choices = getattr(chunk, "choices", None) or []
+                    if not choices:
+                        continue
+                    delta = getattr(choices[0], "delta", None)
+                    if delta is None:
+                        continue
+                    text = getattr(delta, "content", None)
+                    if text:
+                        chunks.append(text)
+                        on_text(text)
+                    for raw_call in getattr(delta, "tool_calls", None) or []:
+                        _merge_tool_call(accumulator, raw_call)
+            finally:
+                await _close_stream(stream)
+        except Exception as exc:
+            raise LLMError(f"调用 LLM 失败：{type(exc).__name__}: {exc}") from exc
+
+        calls = tuple(
+            ToolCall(id=item["id"], name=item["name"], arguments=item["arguments"] or "{}")
+            for _, item in sorted(accumulator.items())
+            if item["name"]
+        )
+        return LLMResponse(
+            content="".join(chunks),
+            tool_calls=calls,
+            metadata=response_metadata,
+        )
+
+    async def aclose(self) -> None:
+        """关闭底层 HTTP 客户端。
+
+        不在事件循环结束前关掉的话，连接池里的响应流会在循环关闭之后被 GC，
+        于是 stderr 上冒出一堆「generator didn't stop after athrow()」。
+        """
+        with contextlib.suppress(Exception):
+            result = self._client.close()
+            if inspect.isawaitable(result):
+                await result
+
+    @staticmethod
+    def _response_metadata(response: Any) -> dict[str, Any]:
+        metadata: dict[str, Any] = {}
+        model = getattr(response, "model", None)
+        if model:
+            metadata["model_version"] = str(model)
+        fingerprint = getattr(response, "system_fingerprint", None)
+        if fingerprint:
+            metadata["system_fingerprint"] = str(fingerprint)
+        request_id = getattr(response, "_request_id", None) or getattr(response, "request_id", None)
+        if request_id:
+            metadata["request_id"] = str(request_id)
+        response_id = getattr(response, "id", None)
+        if response_id:
+            metadata["response_id"] = str(response_id)
+        created = getattr(response, "created", None)
+        if created is not None:
+            metadata["created"] = created
+        return metadata
+
+    @staticmethod
+    def _to_response(response: Any) -> LLMResponse:
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            raise LLMError("LLM 返回了空的 choices")
+        message = getattr(choices[0], "message", None)
+        if message is None:
+            raise LLMError("LLM 返回的 choices[0] 缺少 message")
+
+        calls: list[ToolCall] = []
+        for raw_call in getattr(message, "tool_calls", None) or []:
+            function = getattr(raw_call, "function", None)
+            if function is None or not getattr(function, "name", None):
+                continue
+            calls.append(
+                ToolCall(
+                    id=getattr(raw_call, "id", "") or "",
+                    name=function.name,
+                    arguments=getattr(function, "arguments", None) or "{}",
+                )
+            )
+        return LLMResponse(
+            content=getattr(message, "content", None) or "",
+            tool_calls=tuple(calls),
+            metadata=OpenAICompatProvider._response_metadata(response),
+        )
