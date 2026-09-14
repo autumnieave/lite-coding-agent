@@ -93,6 +93,10 @@
 - `core` 与 `tools` 可独立演进、独立测试；已用脚本核对三层导入关系：core 只依赖 core，tools 只依赖 tools，cli 是唯一装配层。
 - Protocol 是隐式契约，`ToolRegistry` 若改了方法签名，静态检查不一定能发现，需要测试兜底。
 
+**Claude Code 原始设计**：Loop 分两层——外层 `QueryEngine`（约 1155 行）管对话生命周期（用户输入、USD 预算、Token 统计、会话恢复），内层 `queryLoop`（约 1728 行）管一次查询（消息压缩、API 调用、工具执行、错误恢复）；内层是异步生成器（`async function*`），用背压替代回调、用普通 `continue`/`break` 表达控制流。循环「继续」的原因有 7 种（`next_turn`、`collapse_drain_retry`、`reactive_compact_retry`、`max_output_tokens_escalate`、`max_output_tokens_recovery`、`stop_hook_blocking`、`token_budget_continuation`），只有第 1 种是「模型调了工具」。可恢复错误先扣住不抛、跑完恢复再决定是否暴露；`StreamingToolExecutor` 在响应还没流完时就开跑已解析完的工具。
+**参考项目复现**：只实现第 1 种继续原因，两层拆解、错误扣留、流式提前执行全部省略。`docs/01-agent-loop.md` 第 229 行起「真实 Claude Code 比这多做了什么」把这些列为「玩具循环和生产级引擎之间的距离」，并注明结构细节来自公开版本分析，官方文档只坐实 `tool_use` / `tool_result` 回路本身。
+**本实现差异**：在参考项目的单层循环上再切一刀——`core/loop.py` 不持有工具，只声明 `ToolExecutor` / `ToolOutcome` Protocol，由 `cli` 注入 `ToolRegistry`（约束 C4）；另把参考实现默认不限轮数（`max_turns=None`）收紧为默认 10，并返回 `stopped_reason` 供 CLI 判定非零退出码。
+
 ## ADR-007：流式输出默认开启，并接受 httpcore2 关闭流时的已知噪音
 
 **背景**：Day 2 给 CLI 加上流式输出：模型增量文本逐字写 stdout，工具调用与结果实时写 stderr。实现后发现，多轮流式调用会在进程退出阶段向 stderr 打印一段 traceback：`RuntimeError: generator didn't stop after athrow()`。根因在 `httpcore2/_utils.py` 的 `safe_async_iterate`——它在 `finally` 里 `await iterator.aclose()`，而该 async generator 此时正因 GeneratorExit 被关闭，await 一旦挂起，CPython 就判定「generator didn't stop」。消息由 CPython 的 async generator finalizer 通过 `PyErr_WriteUnraisable` 打出，不属于本项目的调用栈。
@@ -111,18 +115,22 @@
 
 **背景**：模型改文件时最容易犯两类错：一是凭记忆写出文件里并不存在的原文，二是要替换的片段在文件中出现多次、结果改错了地方。参考实现 `claude-code-from-scratch/python/mini_claude/tools.py` 的 `_find_actual_string`（第 265 行）与 `_edit_file`（第 290 行）覆盖了这两类错误的一半：0 次报 `old_string not found`，多次报 `found N times, must be unique`，并额外做了弯引号到直引号的归一。
 
-**决策**：保留参考实现的匹配与报错语义，另加两道它没有的防线。
+**决策**：保留参考实现的匹配、报错语义与引号容错；read-before-edit / mtime 防护沿用其思路但换了落点；唯一性报错额外补上它没有的位置信息。
 - 唯一性校验：0 次报「未找到」并提示先 `read_file` 核对缩进与换行；多次报「出现了 N 次」并**列出每次出现的起始行号**，要求扩展上下文使其唯一。
-- read-before-edit：`read_file` 成功时把文件快照写进 `FileTracker`；`edit_file` 拿不到快照直接拒绝。
+- read-before-edit：`read_file` 成功时把文件快照写进 `FileTracker`；`edit_file` 拿不到快照直接拒绝（参考实现在 `executeTool` 分发器里用 `readFileState` Map 做同一件事）。
 - mtime 防护：写入前比对 `mtime_ns` 与字节数，读后被外部改过则要求重读。
 - 引号归一：沿用参考实现的思路，但只在归一确实改变了字符串时才做二次匹配，省掉无谓扫描。
 
 **理由**：
 - 参考实现的报错只说「出现了 N 次」，模型拿不到位置信息，只能盲目扩大 `old_string` 反复试；给出行号能让它一次改对。
-- 参考实现没有 read-before-edit 与 mtime 防护。单轮 CLI 里问题不大，但一旦引入压缩与多轮长任务，模型可能基于已被压缩掉的旧内容下手，改错的代价显著上升。
+- 参考实现把 read-before-edit 与 mtime 防护写在分发器里而非工具里（`docs/02-tools.md` 第 915 行起「Read-before-edit + mtime 防护」，源码是 `executeTool` 中的 `readFileState: Map<绝对路径, mtimeMs>`）。落点不同带来的是耦合方向不同：分发器统一检查要求所有写操作都经过它，而检查下沉进工具后 `edit_file` 单独构造也是安全的，代价是必须显式共享 `FileTracker`。
 - 差异刻意控制在「更严」而不是「更聪明」：不擅自改写 `new_string`，引号只用于定位、写入保持原样，避免静默篡改用户内容。
 
 **结果**：`tests/test_edit_file.py` 22 个用例覆盖唯一匹配、多次匹配、未找到、未读先编辑、mtime 变更、引号归一、路径越界等。代价是多了一个 `FileTracker`，必须在 `build_default_registry` 里显式共享，否则读写工具各持一份、read-before-edit 会永远失败。
+
+**Claude Code 原始设计**：编辑验证是一条 14 步流水线，配合 `readFileTimestamps` 机制保证「编辑必须基于已知状态，不能盲写」；工具结果是三级大结果限制。
+**参考项目复现**：把 14 步压成五项——引号容错 + 唯一性 + diff + read-before-edit + mtime（`docs/02-tools.md` 第 1181 行「我们的简化决策」表列出这条压缩，第 915 行起给出 read-before-edit + mtime 的实现）。匹配层面 `_find_actual_string`（tools.py:265）只做「精确匹配 → 引号归一后再匹配」，命中后返回文件中的原始字符串；`_edit_file`（tools.py:290）把 0 次与多次都转成错误字符串，宁可失败也不猜。
+**本实现差异**：规则子集与参考项目一致，三处不同——① 多次匹配时列出每次出现的行号，参考只给次数，模型只能盲目扩大上下文重试；② 状态检查从分发器下沉进工具（`FileTracker` 注入 `ReadFileTool` / `EditFileTool`），且比对 `(mtime_ns, size)` 而不只是 mtime；③ `write_file` 改为「已存在即拒绝覆盖」，参考只要求已存在文件先读后即可覆盖，我们把「改已有文件」完全推给 `edit_file`。
 
 ## ADR-009：bash 超时改为终止整棵进程树
 
@@ -139,6 +147,10 @@
 - 顺带修了配套的编码问题：Windows 中文环境下 `cmd` 内建命令输出 GBK、`git` 等工具输出 UTF-8，只认一种必然有一半乱码，改为 UTF-8 优先、失败退回 `locale.getpreferredencoding()`。
 
 **结果**：超时真正生效，测试套件从 31.5 秒降到约 6 秒；`test_timeout_actually_stops_the_command` 用计时断言（<20s）把这条行为钉住，防止将来回退。
+
+**Claude Code 原始设计**：Shell 安全靠 AST 解析 + 沙箱，而不是正则匹配；工具结果按「选择性裁剪 + 磁盘持久化」处理，而不是单层截断。
+**参考项目复现**：降级为「正则匹配 + 确认」——`DANGEROUS_PATTERNS` 命中后交由权限层裁决；`_run_shell`（tools.py:424）用 `subprocess.run(shell=True, capture_output=True, text=True, timeout=...)`，超时只捕获 `TimeoutExpired` 并返回 `Command timed out after {ms}ms`，不处理子进程树（见 `docs/02-tools.md` 第 766 行 run_shell 与第 1194 行起的简化对比表）。
+**本实现差异**：保留正则匹配的路子，但把超时做实——`Popen` 启动时让子进程进入独立进程组/会话，超时后按平台终止整棵树（Windows `taskkill /F /T /PID`，POSIX `killpg(SIGKILL)`），再回收管道后才报错；另补了输出解码回退（UTF-8 优先、失败退回本地编码），因为 Windows 中文环境下 cmd 内建命令输出 GBK 而 git 输出 UTF-8。
 
 ## ADR-010：上下文压缩的阈值、估算方式与可观测指标
 
