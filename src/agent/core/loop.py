@@ -133,12 +133,8 @@ class AgentLoop:
         messages.append(user_message(task))
 
         last_content = ""
-        # TODO：Claude Code 的循环有 7 种「继续」原因——next_turn、
-        # collapse_drain_retry、reactive_compact_retry、max_output_tokens_escalate、
-        # max_output_tokens_recovery、stop_hook_blocking、token_budget_continuation。
-        # 这里只实现了第 1 种（模型请求了工具）；其余 6 种都是可恢复错误的处理策略，
-        # 属于生产级引擎的范围，暂不做。逐条对照见
-        # claude-code-from-scratch/docs/01-agent-loop.md:244。
+        # TODO: Claude Code 有 7 种继续原因，当前只实现第 1 种（模型调工具）。
+        # 其余 6 种见 claude-code-from-scratch/docs/01-agent-loop.md:244。Day 6 评估是否补充。
         for turn in range(1, self._max_turns + 1):
             if self._compactor is not None:
                 messages = await self._compactor.compact(messages)
