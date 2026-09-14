@@ -2,7 +2,7 @@
 
 > 从零实现的终端 Coding Agent，不依赖 LangChain 等 Agent 框架。核心目标：在长任务中**不丢失关键约束**。
 
-**当前状态**：v0.1.0 脚手架阶段 —— CLI 入口可运行，Agent Loop 开发中。各功能实现进度见「核心特性」与「路线图」。
+**当前状态**：Agent Loop 已完成，工具系统开发中。各功能实现进度见「核心特性」与「路线图」。
 
 ## 为什么做
 
@@ -13,12 +13,13 @@
 **已实现：**
 
 - ✅ **项目脚手架**：src-layout 打包，`lite-agent` 入口可用
-- ✅ **CLI 骨架**：基于 argparse 的命令行入口与参数解析
+- ✅ **CLI 骨架**：基于 argparse 的命令行入口与参数解析，`lite-agent chat "任务"` 可执行
+- ✅ **Agent Loop**：`while(true)` 主循环，模型返回 tool_call 后就执行并回填结果，`max_turns` 默认 10
+- ✅ **LLM Provider**：OpenAI 兼容协议抽象，从环境变量读取 API Key / Base URL / Model
 
 **开发中：**
 
-- 🚧 **Agent Loop**：`while(true)` 主循环，模型返回 tool_call 后执行工具并回填结果
-- 🚧 **工具系统**：`bash` / `read_file` / `write_file` / `edit_file` / `grep` / `list_dir`，JSON Schema 参数校验 + 危险命令确认
+- 🚧 **工具系统**：已实现 `read_file` / `write_file` / `list_dir`（Pydantic 参数校验 + 路径越界拦截）；`bash` / `edit_file` / `grep` 待补
 - 🚧 **上下文压缩**：四层策略（预算截断 / 裁剪重复 / 微压缩 / 全量摘要）
 - 🚧 **关键约束保留（独有）**：压缩前提取约束、压缩后校验并自愈
 
@@ -65,15 +66,26 @@ pip install -e ".[dev]"
 
 ### 配置
 
-> LLM 配置方式（API Key / Base URL / Model）将在 Agent Loop 完成后补充。
+参考仓库根目录的 `.env.example`，设置三个环境变量：
+
+```bash
+export LLM_API_KEY="your-api-key"
+export LLM_BASE_URL="https://api.deepseek.com/v1"   # OpenAI 兼容端点，按需修改
+export LLM_MODEL="deepseek-chat"
+```
+
+> 当前版本只读取环境变量，不会自动加载 `.env` 文件。
 
 ### 运行
 
 ```bash
-lite-agent --help    # 查看用法与参数
+lite-agent --help                            # 查看用法与参数
+lite-agent chat "列出当前目录"                # 执行一次任务
+lite-agent chat "列出当前目录" --verbose      # 同上，打印每次工具调用
 ```
 
-> 当前进度：脚手架与 CLI 入口已完成，Agent Loop 开发中；交互模式见「路线图」。
+> 当前进度：Agent Loop 已完成，工具系统开发中；交互式 REPL 见「路线图」。
+> 退出码：0 成功 / 1 任务失败（含达到轮数上限）/ 2 配置或用参错误。
 
 ## 项目结构
 
@@ -124,8 +136,8 @@ lite-coding-agent/
 ## 路线图
 
 - [x] 项目脚手架与 CLI 入口
-- [ ] 交互模式（`lite-agent chat`）
-- [ ] Agent Loop + 1 个工具
+- [x] Agent Loop + LLM Provider + 3 个基础工具（`lite-agent chat "任务"` 单次执行）
+- [ ] 交互式 REPL（多轮对话）
 - [ ] 6 个核心工具 + 流式输出
 - [ ] 四层上下文压缩
 - [ ] 关键约束保留机制 + 对比实验
@@ -140,8 +152,8 @@ lite-coding-agent/
 
 ## 参考
 
-- claude-code-from-scratch —— 工具系统与 MCP / 多 Agent 部分作为架构对照
-- How Claude Code Works —— 源码级解析，用于理解 Agent Loop 与上下文压缩
+- [claude-code-from-scratch](https://github.com/Windy3f3f3f3f/claude-code-from-scratch) —— 分步教程（13 章 + 双语言实现），工具系统与 MCP / 多 Agent 部分作为架构对照
+- [How Claude Code Works](https://github.com/Windy3f3f3f3f/how-claude-code-works) —— 源码级解析，用于理解 Agent Loop 与上下文压缩
 
 ## License
 
