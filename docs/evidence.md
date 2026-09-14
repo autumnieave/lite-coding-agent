@@ -12,7 +12,8 @@
 
 耗时从 31.5s 降到约 6s 的原因见 ADR-009：超时用例原先要等满子进程的睡眠时长。Day 3 之后回升到约 11s，是新增的 66 个压缩用例本身的开销，不是回归。
 
-复现：`.venv\Scripts\python -m pytest -q`，`.venv\Scripts\python -m ruff check src tests scripts`。
+复现：`.venv\Scripts\python -m pytest -q`、`.venv\Scripts\python -m ruff check .`、
+`.venv\Scripts\python -m ruff format --check .`。同样三条跑在 CI 上（`.github/workflows/ci.yml`）。
 
 ## 关键验证用例
 
