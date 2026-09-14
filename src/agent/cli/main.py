@@ -11,9 +11,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from agent.core.compaction import Compactor
 from agent.core.config import find_env_file, load_env_file
@@ -116,6 +116,16 @@ async def _run_task(loop: AgentLoop, task: str, provider: BaseProvider) -> LoopR
         await provider.aclose()
 
 
+def _summarizer(provider: BaseProvider) -> Callable[[Sequence[Mapping[str, Any]]], Awaitable[str]]:
+    """把 provider 包成 Compactor 需要的摘要函数（非流式，只要文本）。"""
+
+    async def summarize(messages: Sequence[Mapping[str, Any]]) -> str:
+        response = await provider.chat(messages)
+        return response.content or ""
+
+    return summarize
+
+
 def _build_approver() -> DangerApprover | None:
     """交互式终端里才提供危险命令确认，管道/CI 下退化为模型显式确认。"""
     if not sys.stdin.isatty():
@@ -174,7 +184,7 @@ def run_chat(args: argparse.Namespace) -> int:
 
     printer = _StreamPrinter(sys.stdout)
     reporter = _tool_reporter(args.verbose)
-    compactor = Compactor(on_event=reporter)
+    compactor = Compactor(summarize=_summarizer(provider), on_event=reporter)
     loop = AgentLoop(
         provider,
         build_default_registry(root, approver=_build_approver()),

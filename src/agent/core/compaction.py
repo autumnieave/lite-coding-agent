@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,6 +25,7 @@ from agent.core.context import (
     budget_ratio,
     estimate_tokens,
 )
+from agent.core.llm import system_message, user_message
 
 TIER1 = "tier1"
 TIER2 = "tier2"
@@ -52,6 +53,24 @@ _MARKER_RESERVE = 60
 """为截断标记预留的字符数，保证截断后总长度不超过预算。"""
 
 EventSink = Callable[[str], None]
+
+Summarizer = Callable[[Sequence[Mapping[str, Any]]], Awaitable[str]]
+"""把一段对话压成摘要文本。由上层注入真实 LLM 调用，便于测试替换。"""
+
+SUMMARY_SYSTEM_PROMPT = "你是一个对话摘要器。只输出摘要正文，不要寒暄、不要复述指令、不要调用工具。"
+
+SUMMARY_INSTRUCTION = (
+    "请把以上对话压缩成一段摘要，供后续继续工作时使用。必须逐条保留下面四类信息：\n"
+    "1. 关键决策：已经定下来的方案、结论与取舍；\n"
+    "2. 未完成任务：还没做完的事、待办与下一步；\n"
+    "3. 涉及的文件路径：读写过或讨论过的文件与目录；\n"
+    "4. 关键约束（如有）：用户或项目规则中声明过的限制条件，"
+    "必须逐条原样保留，不得改写、合并或省略。\n"
+    "某一项确实没有内容时写「无」。直接输出摘要正文。"
+)
+
+SUMMARY_PREFIX = "[历史对话摘要]"
+"""摘要作为独立 system message 注入时的前缀。"""
 
 TOOL_ROLE = "tool"
 ASSISTANT_ROLE = "assistant"
@@ -183,21 +202,65 @@ def truncate_tool_messages(
     return result, changed
 
 
+def summary_message(summary: str) -> dict[str, Any]:
+    """把摘要包装成注入用的 system message。"""
+    return system_message(f"{SUMMARY_PREFIX}\n{summary}")
+
+
+def split_messages(
+    messages: Sequence[Mapping[str, Any]],
+    *,
+    keep_recent: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """按「保留最近 N 条」切分对话，返回（待摘要, 保留）。
+
+    切点不能落在 tool 结果上：tool 消息必须与发起它的 assistant 调用同进同出，
+    否则保留下来的 tool 结果会失去配对，下一轮请求会被 API 直接拒绝。
+    """
+    if keep_recent < 0:
+        raise ValueError("keep_recent 不能为负")
+    cut = max(0, len(messages) - keep_recent)
+    while cut > 0 and messages[cut].get("role") == TOOL_ROLE:
+        cut -= 1
+    older = [dict(item) for item in messages[:cut]]
+    recent = [dict(item) for item in messages[cut:]]
+    return older, recent
+
+
+def build_summary_request(older: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """构造摘要请求：原始对话 + 一条要求保留四类信息的指令。"""
+    return [system_message(SUMMARY_SYSTEM_PROMPT), *older, user_message(SUMMARY_INSTRUCTION)]
+
+
+def compose_summary(
+    older: Sequence[Mapping[str, Any]],
+    recent: Sequence[Mapping[str, Any]],
+    summary: str,
+) -> list[dict[str, Any]]:
+    """摘要替换掉较早的历史，原有 system prompt 保留在最前面。"""
+    head = [dict(item) for item in older if item.get("role") == "system"]
+    return [*head, summary_message(summary), *[dict(item) for item in recent]]
+
+
 class Compactor:
     """按 Tier 1 → 2 → 3 → 4 的顺序压缩对话历史。
 
     每次 LLM 调用前调用 `compact()`；`note_api_call()` 在调用返回后记录时刻，
     供 Tier 3 判断空闲时长。`clock` 可注入，便于测试空闲路径。
+
+    `summarize` 是 Tier 4 用的摘要函数；不传则跳过 Tier 4（其余各层照常生效）。
     """
 
     def __init__(
         self,
         config: CompactionConfig | None = None,
         *,
+        summarize: Summarizer | None = None,
         clock: Callable[[], float] = time.monotonic,
         on_event: EventSink | None = None,
     ) -> None:
         self._config = config or CompactionConfig()
+        self._summarize = summarize
         self._clock = clock
         self._on_event = on_event
         self._last_api_call: float | None = None
@@ -222,6 +285,8 @@ class Compactor:
         if ratio < self._config.trigger_ratio:
             return result
         result = self._run_tier1(result, ratio)
+        if self._summarize is not None and self._should_summarize(result):
+            result = await self._run_tier4(result)
         return result
 
     def _run_tier1(self, messages: list[dict[str, Any]], ratio: float) -> list[dict[str, Any]]:
@@ -236,6 +301,41 @@ class Compactor:
             result,
             started,
             f"{changed} 条工具结果压到 {budget} 字符以内",
+        )
+        return result
+
+    def _should_summarize(self, messages: Sequence[Mapping[str, Any]]) -> bool:
+        """压缩完便宜的那几层之后，仍逼近窗口上限才动用 Tier 4。"""
+        ratio = budget_ratio(messages, context_window=self._config.context_window)
+        return ratio >= self._config.summarize_ratio
+
+    @staticmethod
+    def _has_new_material(older: Sequence[Mapping[str, Any]]) -> bool:
+        """待摘要部分是否还有「摘要以外」的内容。
+
+        只剩上一次注入的摘要时不再压：把摘要再摘要一遍是纯损失，
+        而且会在保留窗口本身就超过阈值时逐轮触发，形成抖动。
+        """
+        return any(item.get("role") != "system" for item in older)
+
+    async def _run_tier4(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        older, recent = split_messages(messages, keep_recent=self._config.keep_recent)
+        if not older or not self._has_new_material(older):
+            # 历史还不够长，或只剩上一次的摘要：压了也省不下东西。
+            return messages
+        started = time.perf_counter()
+        assert self._summarize is not None  # 由调用方保证
+        summary = (await self._summarize(build_summary_request(older)) or "").strip()
+        if not summary:
+            # 摘要失败就保持原样，宁可多占 token 也不能把历史丢空。
+            return messages
+        result = compose_summary(older, recent, summary)
+        self._record(
+            TIER4,
+            messages,
+            result,
+            started,
+            f"{len(older)} 条历史压成 1 条摘要，保留最近 {len(recent)} 条",
         )
         return result
 
