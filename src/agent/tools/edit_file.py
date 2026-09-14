@@ -32,7 +32,9 @@ def _normalize_quotes(text: str) -> str:
     return re.sub("[\u201c\u201d\u2033]", '"', text)
 
 
-# 设计对照：claude-code-from-scratch tools.py:265，差异见 ADR-008
+# Claude Code: 14 步编辑验证流水线 + readFileTimestamps 机制
+# 参考项目: 压成五项——引号容错 + 唯一性 + diff + read-before-edit + mtime，见 tools.py:265
+# 本实现: 同规则子集，但多次匹配列出每次出现的行号、状态检查下沉进工具，见 ADR-008
 def _find_actual_string(content: str, search: str) -> str | None:
     """在文件内容中定位 search，返回文件中真实存在的那段文本。
 

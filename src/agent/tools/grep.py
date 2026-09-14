@@ -66,6 +66,8 @@ class GrepTool(Tool):
             body += f"\n\n[已截断] 还有 {hidden} 条匹配未显示，请收窄 pattern 或 include。"
         return ToolResult.success(body)
 
+    # 设计对照：claude-code-from-scratch docs/02-tools.md:704（grep_search 设计段）
+    # Claude Code 用 ripgrep，参考用系统 grep，本实现用纯 Python 遍历，并跳过 .git/.venv/__pycache__
     def _search(
         self, base: Path, pattern: re.Pattern[str], include: str | None
     ) -> tuple[list[str], int]:
