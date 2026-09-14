@@ -2,7 +2,7 @@
 
 > 从零实现的终端 Coding Agent，不依赖 LangChain 等 Agent 框架。核心目标：在长任务中**不丢失关键约束**。
 
-**当前状态**：Agent Loop 已完成，工具系统开发中。各功能实现进度见「核心特性」与「路线图」。
+**当前状态**：Agent Loop + 6 个工具 + 流式输出已完成，上下文压缩开发中。各功能实现进度见「核心特性」与「路线图」。
 
 ## 为什么做
 
@@ -16,10 +16,13 @@
 - ✅ **CLI 骨架**：基于 argparse 的命令行入口与参数解析，`lite-agent chat "任务"` 可执行
 - ✅ **Agent Loop**：`while(true)` 主循环，模型返回 tool_call 后就执行并回填结果，`max_turns` 默认 10
 - ✅ **LLM Provider**：OpenAI 兼容协议抽象，从环境变量读取 API Key / Base URL / Model
+- ✅ **工具系统**：6 个工具全部可用 —— `read_file` / `write_file` / `list_dir` / `edit_file` / `bash` / `grep`（Pydantic 参数校验 + 路径越界拦截）
+- ✅ **edit_file 三道防线**：read-before-edit、mtime 防护、`old_string` 唯一性校验（重复时给出行号）
+- ✅ **bash 安全与超时**：默认 30s 超时并终止整棵进程树、危险命令需显式确认、输出超 2000 行截断
+- ✅ **流式输出**：模型文本逐字写 stdout，工具调用与结果实时写 stderr
 
 **开发中：**
 
-- 🚧 **工具系统**：已实现 `read_file` / `write_file` / `list_dir`（Pydantic 参数校验 + 路径越界拦截）；`bash` / `edit_file` / `grep` 待补
 - 🚧 **上下文压缩**：四层策略（预算截断 / 裁剪重复 / 微压缩 / 全量摘要）
 - 🚧 **关键约束保留（独有）**：压缩前提取约束、压缩后校验并自愈
 
@@ -82,10 +85,11 @@ export LLM_MODEL="deepseek-chat"
 ```bash
 lite-agent --help                            # 查看用法与参数
 lite-agent chat "列出当前目录"                # 执行一次任务
-lite-agent chat "列出当前目录" --verbose      # 同上，打印每次工具调用
+lite-agent chat "列出当前目录" --verbose      # 同上，打印每次工具调用的完整参数与结果
 ```
 
-> 当前进度：Agent Loop 已完成，工具系统开发中；交互式 REPL 见「路线图」。
+> 输出分流：**stdout 只放模型的最终答案**，工具进度默认就实时上报到 **stderr**（`· ` 前缀；`--verbose` 换成 `[verbose] ` 并带完整参数与结果）。因此 `lite-agent chat "..." > answer.txt` 拿到的始终是干净答案。
+> 当前进度：Agent Loop + 6 个工具 + 流式输出已完成，上下文压缩开发中；交互式 REPL 见「路线图」。
 > 退出码：0 成功 / 1 任务失败（含达到轮数上限）/ 2 配置或用参错误。
 
 ## 项目结构

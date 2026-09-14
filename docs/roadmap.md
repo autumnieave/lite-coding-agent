@@ -52,6 +52,16 @@
 | 流式输出 | 2h | 终端逐字输出 |
 | 调试 + commit | 1h | 能演示读→改→跑测试 |
 
+**状态**：✅ 已完成 —— 6 个工具全部可用，流式输出已接。提交：`7d3f213` edit_file、`6ca3e21` bash、`5ed0851` grep、`805a427` 流式输出、`af81400` 流式收尾修复。
+
+**验收（全部通过）**：
+- [x] 超时、危险命令确认（默认 30s；危险命令需 `confirm_dangerous=true` 或交互确认；超时终止整棵进程树）
+- [x] old_string 唯一性校验（唯一匹配可用；多次匹配报「出现了 N 次」并给出行号；未找到、read-before-edit、mtime 防护均有覆盖）
+- [x] 正则搜索 + 结果截断（上限 100 条，超限提示省略条数；跳过 `.git` / `.venv` / `__pycache__`）
+- [x] 工具注册表 + JSON Schema（`Tool.spec()` 输出 OpenAI 兼容 function 定义）
+- [x] 终端逐字输出（模型文本流式写 stdout；工具调用与结果实时写 stderr）
+- [x] 能演示读→改→跑测试（`lite-agent chat "读取 README.md，把标题改成 ..."` 两轮内完成 read_file → edit_file）
+
 **可演示**：让 Agent 读一个文件、改一行、跑 `pytest`。
 **卡点**：`edit_file` 唯一性校验容易出 bug → 参考 `claude-code-from-scratch` 的 `docs/02-tools.md`（edit_file 唯一性校验一节），实现对照 `python/mini_claude/tools.py` 的 `_find_actual_string`（第 265 行）与 `_edit_file`（第 290 行）。
 **风险应对**：若 edit_file 超时，先只支持唯一匹配，冲突时报错让模型重试。
@@ -167,7 +177,7 @@
 
 - [x] **M0**：工程脚手架 + CLI 入口 + 文档（第 0 周完成，6 个 commit）
 - [x] **M1**：Agent Loop 跑通一次工具调用（Day 1 结束，89 个单测通过）
-- [ ] **M2**：6 个工具可用，流式输出（Day 2 结束）
+- [x] **M2**：6 个工具可用，流式输出（Day 2 结束，212 个单测通过）
 - [ ] **M3**：4 层压缩能触发，长会话不崩（Day 3 结束）
 - [ ] **M4**：约束保留机制有对比数据（Day 4 结束）
 - [ ] **M5**：简历级完成，GitHub 完整（Day 5 结束）
