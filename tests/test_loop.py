@@ -237,10 +237,12 @@ async def test_on_event_reports_tool_call_and_result() -> None:
 
     await AgentLoop(provider, tools, on_event=events.append).run("任务")
 
-    assert len(events) == 1
-    assert "read_file" in events[0]
-    assert "成功" in events[0]
-    assert "内容" in events[0]
+    assert len(events) == 2
+    # 先报「调用」再报「结果」：执行长命令期间终端不会一直静默
+    assert "调用 read_file" in events[0]
+    assert "结果 read_file" in events[1]
+    assert "成功" in events[1]
+    assert "内容" in events[1]
 
 
 async def test_on_event_reports_max_turns() -> None:
@@ -289,3 +291,54 @@ async def test_loop_works_with_real_registry_and_read_file(tmp_path: Path) -> No
     assert result.content == "项目名是 demo"
     tool_message = [item for item in provider.calls[1]["messages"] if item["role"] == "tool"][-1]
     assert 'name = "demo"' in tool_message["content"]
+
+
+# ---------- 流式回调 ----------
+
+
+async def test_on_text_receives_streamed_chunks() -> None:
+    class _StreamingProvider(BaseProvider):
+        async def chat(
+            self,
+            messages: Sequence[Mapping[str, Any]],
+            tools: Sequence[Mapping[str, Any]] | None = None,
+        ) -> LLMResponse:
+            raise AssertionError("应走 chat_stream")
+
+        async def chat_stream(
+            self,
+            messages: Sequence[Mapping[str, Any]],
+            tools: Sequence[Mapping[str, Any]] | None = None,
+            on_text: Any = None,
+        ) -> LLMResponse:
+            for piece in ("片段一", "片段二"):
+                if on_text is not None:
+                    on_text(piece)
+            return LLMResponse(content="片段一片段二")
+
+    received: list[str] = []
+
+    loop = AgentLoop(_StreamingProvider(), _FakeTools(), on_text=received.append)
+
+    result = await loop.run("任务")
+
+    assert received == ["片段一", "片段二"]
+    assert result.content == "片段一片段二"
+
+
+async def test_default_streaming_replays_full_content_once() -> None:
+    """只实现 chat 的 Provider 走默认流式实现：完整内容回调一次。"""
+    provider = _ScriptedProvider([LLMResponse(content="整段答案")])
+    received: list[str] = []
+
+    await AgentLoop(provider, _FakeTools(), on_text=received.append).run("任务")
+
+    assert received == ["整段答案"]
+
+
+async def test_streaming_without_on_text_skips_callback() -> None:
+    provider = _ScriptedProvider([LLMResponse(content="答案")])
+
+    result = await AgentLoop(provider, _FakeTools()).run("任务")
+
+    assert result.content == "答案"

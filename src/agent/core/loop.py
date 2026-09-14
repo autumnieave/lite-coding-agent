@@ -13,6 +13,7 @@ from typing import Any, Protocol
 
 from agent.core.llm import (
     BaseProvider,
+    TextCallback,
     assistant_message,
     system_message,
     tool_result_message,
@@ -86,7 +87,9 @@ class AgentLoop:
         max_turns: int = DEFAULT_MAX_TURNS,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         on_event: Callable[[str], None] | None = None,
+        on_text: TextCallback | None = None,
     ) -> None:
+        """`on_event` 接收工具进度，`on_text` 接收模型增量输出。"""
         if max_turns < 1:
             raise ValueError("max_turns 必须 >= 1")
         self._provider = provider
@@ -94,6 +97,7 @@ class AgentLoop:
         self._max_turns = max_turns
         self._system_prompt = system_prompt
         self._on_event = on_event
+        self._on_text = on_text
 
     @property
     def max_turns(self) -> int:
@@ -111,7 +115,9 @@ class AgentLoop:
 
         last_content = ""
         for turn in range(1, self._max_turns + 1):
-            response = await self._provider.chat(messages, tools=self._tools.specs())
+            response = await self._provider.chat_stream(
+                messages, tools=self._tools.specs(), on_text=self._on_text
+            )
             messages.append(assistant_message(response.content, response.tool_calls))
             last_content = response.content
 
@@ -119,9 +125,11 @@ class AgentLoop:
                 return LoopResult(content=response.content, turns=turn, stopped_reason=COMPLETED)
 
             for call in response.tool_calls:
+                # 先报「开始」再执行：跑长命令时终端不会一直静默
+                self._emit(f"[第 {turn} 轮] 调用 {call.name}({_preview(call.arguments)})")
                 result = await self._tools.execute(call.name, call.arguments)
                 self._emit(
-                    f"[第 {turn} 轮] {call.name}({_preview(call.arguments)})"
+                    f"[第 {turn} 轮] 结果 {call.name}"
                     f" -> {'成功' if result.ok else '失败'}：{_preview(result.content)}"
                 )
                 messages.append(tool_result_message(call.id, result.content))

@@ -11,7 +11,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import TextIO
 
 from agent.core.config import find_env_file, load_env_file
 from agent.core.llm import LLMConfigError, LLMError, OpenAICompatProvider
@@ -60,6 +62,46 @@ def chat_help_parser() -> argparse.ArgumentParser:
 
 def _stderr_event(message: str) -> None:
     print(f"[verbose] {message}", file=sys.stderr)
+
+
+def _tool_reporter(verbose: bool) -> Callable[[str], None]:
+    """工具进度写 stderr；stdout 只留给模型的答案，方便重定向到文件。
+
+    默认用「·」前缀的简版；`--verbose` 换成带完整参数与输出的详细版。
+    """
+    prefix = "[verbose] " if verbose else "· "
+
+    def report(message: str) -> None:
+        print(f"{prefix}{message}", file=sys.stderr, flush=True)
+
+    return report
+
+
+class _StreamPrinter:
+    """把模型的增量输出即时写进 stdout，并记录是否输出过内容。"""
+
+    def __init__(self, stream: TextIO) -> None:
+        self._stream = stream
+        self._wrote = False
+        self._ends_with_newline = True
+
+    def __call__(self, text: str) -> None:
+        if not text:
+            return
+        self._stream.write(text)
+        self._stream.flush()
+        self._wrote = True
+        self._ends_with_newline = text.endswith("\n")
+
+    @property
+    def wrote_anything(self) -> bool:
+        return self._wrote
+
+    def finish(self) -> None:
+        """流式结束后补一个换行，免得 shell 提示符接在答案同一行。"""
+        if self._wrote and not self._ends_with_newline:
+            self._stream.write("\n")
+            self._stream.flush()
 
 
 def _build_approver() -> DangerApprover | None:
@@ -118,11 +160,13 @@ def run_chat(args: argparse.Namespace) -> int:
         print(f"配置错误：{exc}", file=sys.stderr)
         return EXIT_USAGE_ERROR
 
+    printer = _StreamPrinter(sys.stdout)
     loop = AgentLoop(
         provider,
         build_default_registry(root, approver=_build_approver()),
         max_turns=args.max_turns,
-        on_event=_stderr_event if args.verbose else None,
+        on_event=_tool_reporter(args.verbose),
+        on_text=printer,
     )
 
     try:
@@ -134,8 +178,10 @@ def run_chat(args: argparse.Namespace) -> int:
         print("已中断", file=sys.stderr)
         return EXIT_TASK_FAILED
 
-    if result.content:
+    # 流式输出过的内容不再重复打印；没有流式输出时（例如只调用了工具）才补印。
+    if result.content and not printer.wrote_anything:
         print(result.content)
+    printer.finish()
 
     if not result.completed:
         print(

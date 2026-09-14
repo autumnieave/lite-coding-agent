@@ -196,3 +196,130 @@ def test_assistant_message_with_tool_calls() -> None:
     assert message["tool_calls"] == [
         {"id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}
     ]
+
+
+# ---------- 流式输出 ----------
+
+
+def _delta_chunk(content: str | None = None, tool_calls: list[Any] | None = None) -> Any:
+    delta = SimpleNamespace(content=content, tool_calls=tool_calls)
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+
+def _tool_call_delta(
+    index: int = 0,
+    call_id: str | None = None,
+    name: str | None = None,
+    arguments: str | None = None,
+) -> Any:
+    return SimpleNamespace(
+        index=index, id=call_id, function=SimpleNamespace(name=name, arguments=arguments)
+    )
+
+
+class _FakeStream:
+    """把预置分片当作异步迭代器，模拟 SSE 流。"""
+
+    def __init__(self, chunks: list[Any]) -> None:
+        self._chunks = chunks
+
+    def __aiter__(self) -> Any:
+        return self._iterate()
+
+    async def _iterate(self) -> Any:
+        for chunk in self._chunks:
+            yield chunk
+
+
+async def test_chat_stream_emits_incremental_text() -> None:
+    client = _FakeClient(response=_FakeStream([_delta_chunk("你"), _delta_chunk("好")]))
+    received: list[str] = []
+
+    response = await _provider(client).chat_stream(
+        [user_message("hi")], on_text=received.append
+    )
+
+    assert received == ["你", "好"]
+    assert response.content == "你好"
+    assert client.completions.calls[0]["stream"] is True
+
+
+async def test_chat_stream_skips_chunks_without_choices() -> None:
+    client = _FakeClient(
+        response=_FakeStream(
+            [_delta_chunk("答"), SimpleNamespace(choices=[]), _delta_chunk("案")]
+        )
+    )
+    received: list[str] = []
+
+    response = await _provider(client).chat_stream([user_message("hi")], on_text=received.append)
+
+    assert response.content == "答案"
+    assert received == ["答", "案"]
+
+
+async def test_chat_stream_assembles_tool_call_fragments() -> None:
+    """首个分片带 id 与函数名，后续分片只补 arguments，必须累加而非覆盖。"""
+    client = _FakeClient(
+        response=_FakeStream(
+            [
+                _delta_chunk(
+                    tool_calls=[_tool_call_delta(0, "call_1", "read_file", '{"path": ')]
+                ),
+                _delta_chunk(tool_calls=[_tool_call_delta(0, None, None, '"a.txt"}')]),
+            ]
+        )
+    )
+
+    response = await _provider(client).chat_stream([user_message("hi")], on_text=lambda _: None)
+
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].id == "call_1"
+    assert response.tool_calls[0].name == "read_file"
+    assert response.tool_calls[0].arguments == '{"path": "a.txt"}'
+
+
+async def test_chat_stream_keeps_parallel_tool_calls_separate() -> None:
+    client = _FakeClient(
+        response=_FakeStream(
+            [
+                _delta_chunk(
+                    tool_calls=[
+                        _tool_call_delta(0, "call_a", "list_dir", '{"path": "."}'),
+                        _tool_call_delta(1, "call_b", "read_file", '{"path": "a"}'),
+                    ]
+                ),
+            ]
+        )
+    )
+
+    response = await _provider(client).chat_stream([user_message("hi")], on_text=lambda _: None)
+
+    assert [call.id for call in response.tool_calls] == ["call_a", "call_b"]
+
+
+async def test_chat_stream_drops_nameless_tool_calls() -> None:
+    client = _FakeClient(
+        response=_FakeStream([_delta_chunk(tool_calls=[_tool_call_delta(0, "call_x", None, "{}")])])
+    )
+
+    response = await _provider(client).chat_stream([user_message("hi")], on_text=lambda _: None)
+
+    assert response.tool_calls == ()
+
+
+async def test_chat_stream_without_callback_uses_non_streaming() -> None:
+    """没有回调时不必分片拼装，直接走既有非流式链路。"""
+    client = _FakeClient(response=_raw_response(content="整段"))
+
+    response = await _provider(client).chat_stream([user_message("hi")])
+
+    assert response.content == "整段"
+    assert "stream" not in client.completions.calls[0]
+
+
+async def test_chat_stream_wraps_errors_in_llm_error() -> None:
+    client = _FakeClient(error=RuntimeError("断网"))
+
+    with pytest.raises(LLMError, match="断网"):
+        await _provider(client).chat_stream([user_message("hi")], on_text=lambda _: None)

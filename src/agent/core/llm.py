@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +28,10 @@ class LLMError(RuntimeError):
 
 class LLMConfigError(LLMError):
     """缺少或非法配置。"""
+
+
+TextCallback = Callable[[str], None]
+"""流式输出时接收增量文本的回调。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +92,43 @@ class BaseProvider(ABC):
     ) -> LLMResponse:
         """发送对话历史，返回模型回复。失败抛 `LLMError`。"""
 
+    async def chat_stream(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        tools: Sequence[Mapping[str, Any]] | None = None,
+        on_text: TextCallback | None = None,
+    ) -> LLMResponse:
+        """流式对话：边生成边把增量文本交给 `on_text`。
+
+        默认实现退化为非流式调用，拿到完整结果后一次性回调，
+        这样只实现 `chat` 的 Provider（含测试替身）也能被上层按流式接口统一调用。
+        """
+        response = await self.chat(messages, tools=tools)
+        if on_text is not None and response.content:
+            on_text(response.content)
+        return response
+
+
+def _merge_tool_call(accumulator: dict[int, dict[str, str]], raw: Any) -> None:
+    """拼装流式返回的 tool_call 分片。
+
+    OpenAI 兼容协议里首个分片带 id 与函数名，后续分片只补 arguments，
+    因此必须按 index 累加，覆盖式赋值会把参数丢掉。
+    """
+    index = getattr(raw, "index", 0) or 0
+    function = getattr(raw, "function", None)
+    slot = accumulator.get(index)
+    if slot is None:
+        accumulator[index] = {
+            "id": getattr(raw, "id", "") or "",
+            "name": (getattr(function, "name", "") or "") if function else "",
+            "arguments": (getattr(function, "arguments", "") or "") if function else "",
+        }
+        return
+    arguments = (getattr(function, "arguments", None) or "") if function else ""
+    if arguments:
+        slot["arguments"] += arguments
+
 
 class OpenAICompatProvider(BaseProvider):
     """OpenAI 兼容协议的 Provider。"""
@@ -134,6 +175,50 @@ class OpenAICompatProvider(BaseProvider):
         except Exception as exc:
             raise LLMError(f"调用 LLM 失败：{type(exc).__name__}: {exc}") from exc
         return self._to_response(response)
+
+    async def chat_stream(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        tools: Sequence[Mapping[str, Any]] | None = None,
+        on_text: TextCallback | None = None,
+    ) -> LLMResponse:
+        """逐个分片读取回复，边读边回调。
+
+        没有 `on_text` 时直接走非流式：既省掉分片拼装，也保证既有链路行为不变。
+        """
+        if on_text is None:
+            return await self.chat(messages, tools=tools)
+
+        payload: dict[str, Any] = {"model": self.model, "messages": list(messages), "stream": True}
+        if tools:
+            payload["tools"] = list(tools)
+
+        chunks: list[str] = []
+        accumulator: dict[int, dict[str, str]] = {}
+        try:
+            stream = await self._client.chat.completions.create(**payload)
+            async for chunk in stream:
+                choices = getattr(chunk, "choices", None) or []
+                if not choices:
+                    continue
+                delta = getattr(choices[0], "delta", None)
+                if delta is None:
+                    continue
+                text = getattr(delta, "content", None)
+                if text:
+                    chunks.append(text)
+                    on_text(text)
+                for raw_call in getattr(delta, "tool_calls", None) or []:
+                    _merge_tool_call(accumulator, raw_call)
+        except Exception as exc:
+            raise LLMError(f"调用 LLM 失败：{type(exc).__name__}: {exc}") from exc
+
+        calls = tuple(
+            ToolCall(id=item["id"], name=item["name"], arguments=item["arguments"] or "{}")
+            for _, item in sorted(accumulator.items())
+            if item["name"]
+        )
+        return LLMResponse(content="".join(chunks), tool_calls=calls)
 
     @staticmethod
     def _to_response(response: Any) -> LLMResponse:
