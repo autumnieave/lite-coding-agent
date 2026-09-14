@@ -22,6 +22,9 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# 运行期状态（约束存储等）
+.lite-agent/
+
 # 环境变量与密钥
 .env
 .env.*
