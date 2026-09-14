@@ -216,16 +216,20 @@ class ConstraintStore:
         return item
 
     def absorb(self, messages: Iterable[Any], *, source: str = SOURCE_USER) -> list[Constraint]:
-        """扫描消息，把其中的 `[CONSTRAINT]` 声明收进来。返回本次新增的约束。"""
+        """扫描消息，把其中的 `[CONSTRAINT]` 声明收进来。返回本次新增的约束。
+
+        只认用户消息：助手消息里的同款文本多半是复述或举例，算成约束会误伤。
+        同一 id 已经存在时按「先到先得」跳过——扫的是自由文本，重申同一条约束是常态，
+        为此抛错会打断整轮对话。`add()` 保持严格，那里是显式写入。
+        """
         added: list[Constraint] = []
         for message in messages:
             if isinstance(message, dict) and message.get("role") != "user":
                 continue
             for code, content in extract_declarations(message_text(message)):
-                before = self._items.get(code)
-                item = self.add(content, source=source, constraint_id=code)
-                if before is None:
-                    added.append(item)
+                if code in self._items:
+                    continue
+                added.append(self.add(content, source=source, constraint_id=code))
         return added
 
     # ---------- 查询与校验 ----------
