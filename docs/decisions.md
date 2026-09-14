@@ -170,3 +170,7 @@
 - 记录触发次数与 token 数，是为了 Day 4 的对比实验能复用同一套指标，避免重复搭埋点。
 
 **结果**：压缩行为可配置、可观测。代价是估算不精确，可能提前或滞后触发压缩；这一点在 Day 3 的 20 轮验证里量化。
+
+**Claude Code 原始设计**：5 级流水线——Tool Result budget（含磁盘持久化）→ History Snip → Microcompact（冷热缓存双路径）→ Context Collapse 投影 → Autocompact（约 85.5% 触发，两阶段「分析-摘要」）。
+**参考项目复现**：4 层压缩（Budget 双阈值 50%/70%、Snip >60%、Microcompact 空闲 5 分钟、Auto-compact >85%），另有第 0 / 0.5 层在工具层做执行期截断与落盘，合计 6 层（`claude-code-from-scratch/docs/07-context.md` 第 165 / 204 / 237 / 291 / 317 / 349 行，对照段在第 660 行）。
+**本实现差异**：层数同为 4 层、分层职责一一对应（Tier 1~4 ↔ Budget / Snip / Microcompact / Auto-compact），但四处不同——① 入口线统一为 60%，参考的 Budget 用的是 50%/70% 双阈值；② Tier 3 比参考多一条「利用率 ≥ 60%」的门，避免上下文宽裕时做无谓清理（实测会被 Tier 2 抢先压到线下而跳过）；③ 没有落盘那一层，大结果靠 `read_file` / `bash` 的 2000 行截断兜底；④ Tier 4 加了两条参考没有的护栏——切点不落在 tool 结果上（否则 assistant 与 tool 消息会失去配对，API 直接报错），以及只剩上一次摘要时不再压（否则保留窗口本身超线时会逐轮抖动）。
