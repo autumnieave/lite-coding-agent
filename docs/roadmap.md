@@ -84,6 +84,8 @@
 **可演示**：跑一个 20 轮对话，观察压缩触发且对话能接续。
 **卡点**：摘要 Prompt 写不好会导致信息丢失 → 先用简单 Prompt，后续调优。
 **风险应对**：若 Tier 4 超时，先只做 Tier 1 + Tier 4，Tier 2/3 后补。
+**参考**：`claude-code-from-scratch/docs/07-context.md` —— 第 37 行「我们的实现」；分层源码位置：第 165 行执行期截断 `truncateResult`、第 204 行大结果持久化 `persistLargeResult`、第 237 行 Budget、第 291 行 Snip、第 317 行 Microcompact、第 349 行 Auto-compact、第 604 行前缀缓存；第 660 行起「真实 Claude Code 比这多做了什么」。实现对照 `python/mini_claude/agent.py`（Anthropic 压缩第 426 行、OpenAI 压缩第 503 行）与 `python/mini_claude/tools.py`（执行期截断与持久化）。
+> 层数对齐：参考项目实际是 6 层，其中第 0 / 0.5 层在工具层做执行期截断与持久化（对应我们 `read_file` / `bash` 已有的 2000 行截断）；本表的 Tier 1–4 对应参考的第 1–4 层。Claude Code 原始设计是 5 级流水线，与参考项目的 4 层压缩不等价。
 
 ---
 
@@ -103,6 +105,7 @@
 **可演示**：同一长任务，开启/关闭约束保留，违反次数对比。
 **卡点**：对比实验设计 → 哪怕 10 个用例，也是真实数据。
 **风险应对**：若实验设计超时，先用 5 个用例跑通，第 6 天扩大到 20 个。
+**参考**：**无直接对照** —— 约束保留是本项目独有方向，参考项目与 Claude Code 都没有「约束独立存储 + 压缩后校验自愈」机制。可借鉴的相邻设计只有两处：`docs/07-context.md` 第 688 行 Claude Code 的 Level 5 Autocompact 用「分析-摘要」两阶段（先 `<analysis>` 推理，再输出 9 段 `<summary>`，最后剥离推理只留摘要）；`docs/01-agent-loop.md` 第 244-245 行 `collapse_drain_retry` / `reactive_compact_retry` 处理 PTL 错误时的重试顺序。摘要 Prompt 与校验逻辑需自己设计，接口见 ADR-004 与 ADR-010（摘要 Prompt 已为关键约束预留字段）。
 
 ---
 
@@ -123,6 +126,7 @@
 **可演示**：GitHub README 完整，CI 绿，评测数据填入。
 **卡点**：时间不够 → 测试优先级 > 文档 > GIF。
 **风险应对**：若单测超时，先覆盖 `constraints.py` 和 `context.py`，其余第 6 天补。
+**参考**：`docs/08-memory.md`（记忆系统）与 `docs/04-cli-session.md`（会话与恢复）；实现对照 `python/mini_claude/memory.py`、`python/mini_claude/session.py`。AGENTS.md 的目录层级加载对照 `docs/07-context.md` 第 670 行 CLAUDE.md 的「从 CWD 向上遍历目录树」。
 
 ---
 
@@ -141,6 +145,7 @@
 **可演示**：约束保留实验数据更可信，文档完整。
 **卡点**：补债时间不够 → 优先补约束实验和 decisions.md。
 **风险应对**：若欠债太多，第 7 天继续补，MCP 可放弃。
+**参考**：测试策略对照 `docs/14-testing.md`（第 646 行有快速对照表）；system prompt 与规则注入的写法对照 `docs/03-system-prompt.md`。本日以补债与文档校验为主，无新增参考实现。
 
 ---
 
@@ -154,7 +159,7 @@
 | 子 Agent 隔离 | 4-5h | 独立上下文 + 工具白名单 |
 
 **可演示**：接入一个外部 MCP server，或子 Agent 完成一次隔离任务。
-**卡点**：JSON-RPC 握手不熟 → 参考 `claude-code-from-scratch` 的 `docs/12-mcp.md`（MCP 集成）；子 Agent 隔离参考 `docs/11-multi-agent.md`。实现对照 `python/mini_claude/mcp_client.py` 与 `python/mini_claude/subagent.py`。
+**卡点**：JSON-RPC 握手不熟 → MCP 参考 `claude-code-from-scratch/docs/12-mcp.md`（对照段在第 575 行），实现对照 `python/mini_claude/mcp_client.py`；子 Agent 隔离参考 `docs/11-multi-agent.md`（对照段在第 634 行），实现对照 `python/mini_claude/subagent.py`。
 **风险应对**：若时间不够，不做，把第 6 天补扎实。**MCP 和子 Agent 是锦上添花，不是简历必需。**
 
 ---
