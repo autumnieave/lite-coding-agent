@@ -1,6 +1,6 @@
 # 开发路线图
 
-> **当前进度**：第 0 周 ✅ 已完成（脚手架 + CLI 入口 + 文档，共 6 个 commit，最新 `8b7171b`）
+> **当前进度**：第 0 周 ✅ 已完成（脚手架 / CLI 入口 / 文档）；Day 1 ✅ 已完成（Agent Loop + LLM Provider + 3 个基础工具 + `chat` 命令）
 > **策略**：5 天完成简历级核心，第 6–7 天缓冲 + 加分项
 > **原则**：每天结束必须有可运行版本，每天至少 3 个 commit
 
@@ -24,6 +24,15 @@
 | `cli/main.py` 接上 chat 命令 | 1h | `lite-agent chat` 能跑 |
 | 调试 + commit | 1h | 3 个 commit，能演示一次工具调用 |
 
+**状态**：✅ 已完成 —— 4 个模块全部实现，89 个单测通过。提交：`552a6a1` LLM Provider、`b0948ff` 工具注册表与文件工具、`c12a2ed` Agent Loop、`cc8fb30` CLI chat。
+
+**验收（全部通过）**：
+- [x] 接一家 API，工具调用格式跑通（`OpenAICompatProvider`，OpenAI 兼容协议）
+- [x] 终止条件、错误回填、最大轮数（`max_turns` 默认 10，超限返回 `stopped_reason="max_turns"`）
+- [x] 参数校验 + 截断（Pydantic 校验；`read_file` 超 2000 行截断）
+- [x] `lite-agent chat` 能跑
+- [x] 能演示一次工具调用（`list_dir` 返回工作区目录列表）
+
 **可演示**：输入“列出当前目录”，Agent 调 `list_dir` 并返回。
 **卡点**：LLM API 工具调用格式不熟 → 先只接一家，跑通再抽象。
 **风险应对**：若 API 调试超 2h，先用 mock LLM 跑通循环，再替换真实 API。
@@ -44,7 +53,7 @@
 | 调试 + commit | 1h | 能演示读→改→跑测试 |
 
 **可演示**：让 Agent 读一个文件、改一行、跑 `pytest`。
-**卡点**：`edit_file` 唯一性校验容易出 bug → 参考 `claude-code-from-scratch` 的工具系统实现。
+**卡点**：`edit_file` 唯一性校验容易出 bug → 参考 `claude-code-from-scratch` 的 `docs/02-tools.md`（edit_file 唯一性校验一节），实现对照 `python/mini_claude/tools.py` 的 `_find_actual_string`（第 265 行）与 `_edit_file`（第 290 行）。
 **风险应对**：若 edit_file 超时，先只支持唯一匹配，冲突时报错让模型重试。
 
 ---
@@ -135,7 +144,7 @@
 | 子 Agent 隔离 | 4-5h | 独立上下文 + 工具白名单 |
 
 **可演示**：接入一个外部 MCP server，或子 Agent 完成一次隔离任务。
-**卡点**：JSON-RPC 握手不熟 → 参考 `claude-code-from-scratch` 的 MCP / 多 Agent 部分。
+**卡点**：JSON-RPC 握手不熟 → 参考 `claude-code-from-scratch` 的 `docs/12-mcp.md`（MCP 集成）；子 Agent 隔离参考 `docs/11-multi-agent.md`。实现对照 `python/mini_claude/mcp_client.py` 与 `python/mini_claude/subagent.py`。
 **风险应对**：若时间不够，不做，把第 6 天补扎实。**MCP 和子 Agent 是锦上添花，不是简历必需。**
 
 ---
@@ -157,7 +166,7 @@
 ## 里程碑
 
 - [x] **M0**：工程脚手架 + CLI 入口 + 文档（第 0 周完成，6 个 commit）
-- [ ] **M1**：Agent Loop 跑通一次工具调用（Day 1 结束）
+- [x] **M1**：Agent Loop 跑通一次工具调用（Day 1 结束，89 个单测通过）
 - [ ] **M2**：6 个工具可用，流式输出（Day 2 结束）
 - [ ] **M3**：4 层压缩能触发，长会话不崩（Day 3 结束）
 - [ ] **M4**：约束保留机制有对比数据（Day 4 结束）

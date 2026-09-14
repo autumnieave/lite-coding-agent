@@ -66,3 +66,29 @@
 - 协程模型上 Python 的 asyncio 足够支撑单会话工具调用，不需要 TS 的事件循环优势。
 - 已知代价：跨平台路径处理、终端渲染不如 Node 生态成熟，需要额外注意 Windows 兼容。
 - 若后续要做 IDE 插件或 Web 前端，可以用 TS 单独写，通过 MCP 协议与 Python 主体通信，不冲突。
+
+## ADR-006：Agent Loop 的关键取舍（对照 claude-code-from-scratch）
+
+**背景**：Agent Loop 是整个项目的心脏。参考项目 `claude-code-from-scratch` 的 `python/mini_claude/agent.py`（1951 行）给了成熟做法，但它把所有东西塞进一个 `Agent` 类：循环、工具分发、权限、压缩、流式混在一起。我们需要保留核心机制，同时让模块边界可单测。
+
+**参考实现（第 1 章 `docs/01-agent-loop.md`）的关键事实**
+
+| 维度 | 做法 | 位置 |
+| --- | --- | --- |
+| 终止条件 | 这一轮没有任何 `tool_use` / `tool_calls` 就 `break`；代码里没有任何按工具名分支的判断，循环转不转由模型决定 | `agent.py:1543`、`agent.py:1764` |
+| 错误回填 | 工具层不抛异常，把失败变成字符串结果：`Error: ...`、`Unknown tool: ...`、`Warning: ...` | `tools.py:670-735` |
+| 最大轮数 | `max_turns` 是可选参数，默认 `None`（不限轮数）；每轮 `current_turns += 1` 后调 `_check_budget()`，与 token 成本上限共用一套检查 | `agent.py:191,204,1548-1551` |
+| tool_calls 保留 | assistant 消息原样进历史：Anthropic 存完整 content blocks；OpenAI 直接把响应里的 message dict 整个 append（含 `tool_calls`）；工具结果靠 id 配对回填 | `agent.py:1538-1541`、`agent.py:1761` |
+| 超限时的一致性 | 预算或轮数超限时，先给每个未执行的调用补一条「未执行」结果再 `break`——缺了配对，下一轮请求的历史就非法 | `agent.py:1552-1560`、`agent.py:1773-1781` |
+
+**决策与差异**
+- 终止条件与参考实现同源：`if not response.tool_calls` 即返回，不做任何基于工具名的分支。
+- 错误回填更早、更结构化：参考实现把参数 JSON 解析失败静默降级成空 `{}`（`agent.py:1792-1795`），模型只能看到二手的「缺少必填参数」。我们在 `Tool.run()` 里先拦 `JSONDecodeError`，直接告诉模型「参数不是合法 JSON」，Pydantic 校验失败再逐字段回报。
+- **最大轮数默认收紧**：参考实现默认不限轮数，我们默认 `max_turns=10`，并返回 `stopped_reason="max_turns"`。理由是评测要跑固定任务集，需要可复现的调用次数上限，且非零退出码能让 CLI 明确报告任务未完成。
+- **配对完整性天然成立**：我们的循环是「一轮内执行完全部 tool_call 并逐条回填」才进入下一轮或退出，不存在「assistant 消息已入历史但缺 tool 结果」的中间态，因此不需要像参考实现那样补占位结果。
+- **依赖倒置（本项目最大的结构差异）**：参考实现把工具执行硬编码在 `Agent` 内部（`_execute_tool_call` 直接调 `tools.execute_tool`）。我们按约束 C4 让 `core` 不导入 `tools`：`core/loop.py` 只声明 `ToolExecutor` / `ToolOutcome` 两个 Protocol，由 `cli` 层注入 `ToolRegistry`。代价是多一层抽象；收益是 loop 的测试可以完全脱离工具实现，换一套工具实现也不需要改 core。
+- 暂不实现参考实现的流式早期工具执行与多种错误恢复分支（第 5、15 章），属于工程加固，不在 Day 1 范围。
+
+**后果**
+- `core` 与 `tools` 可独立演进、独立测试；已用脚本核对三层导入关系：core 只依赖 core，tools 只依赖 tools，cli 是唯一装配层。
+- Protocol 是隐式契约，`ToolRegistry` 若改了方法签名，静态检查不一定能发现，需要测试兜底。
