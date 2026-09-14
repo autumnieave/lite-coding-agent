@@ -16,7 +16,7 @@ from pathlib import Path
 from agent.core.config import find_env_file, load_env_file
 from agent.core.llm import LLMConfigError, LLMError, OpenAICompatProvider
 from agent.core.loop import DEFAULT_MAX_TURNS, AgentLoop
-from agent.tools import build_default_registry
+from agent.tools import DangerApprover, build_default_registry
 
 __version__ = "0.1.0"
 
@@ -62,6 +62,28 @@ def _stderr_event(message: str) -> None:
     print(f"[verbose] {message}", file=sys.stderr)
 
 
+def _build_approver() -> DangerApprover | None:
+    """交互式终端里才提供危险命令确认，管道/CI 下退化为模型显式确认。"""
+    if not sys.stdin.isatty():
+        return None
+
+    def approve(command: str) -> bool:
+        print(
+            f"\n检测到危险命令，需要你确认：\n  {command}\n继续执行？[y/N] ",
+            end="",
+            file=sys.stderr,
+            flush=True,
+        )
+        try:
+            answer = input()
+        except (EOFError, KeyboardInterrupt):
+            print(file=sys.stderr)
+            return False
+        return answer.strip().lower() in {"y", "yes"}
+
+    return approve
+
+
 def run_chat(args: argparse.Namespace) -> int:
     """执行 `lite-agent chat`。"""
     if args.task is None:
@@ -98,7 +120,7 @@ def run_chat(args: argparse.Namespace) -> int:
 
     loop = AgentLoop(
         provider,
-        build_default_registry(root),
+        build_default_registry(root, approver=_build_approver()),
         max_turns=args.max_turns,
         on_event=_stderr_event if args.verbose else None,
     )
