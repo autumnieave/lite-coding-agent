@@ -59,9 +59,7 @@ async def test_stderr_is_included_on_success(workspace: Path) -> None:
 
 
 async def test_no_output_command(workspace: Path) -> None:
-    result = await BashTool(workspace).run(
-        _payload(_python("pass"))
-    )
+    result = await BashTool(workspace).run(_payload(_python("pass")))
 
     assert result.ok is True
     assert result.content == "(无输出)"
@@ -71,9 +69,7 @@ async def test_no_output_command(workspace: Path) -> None:
 
 
 async def test_non_zero_exit_returns_failure(workspace: Path) -> None:
-    result = await BashTool(workspace).run(
-        _payload(_python("import sys; sys.exit(3)"))
-    )
+    result = await BashTool(workspace).run(_payload(_python("import sys; sys.exit(3)")))
 
     assert result.ok is False
     assert "退出码 3" in result.content
@@ -116,9 +112,7 @@ async def test_timeout_actually_stops_the_command(workspace: Path) -> None:
 
 
 async def test_timeout_above_max_is_rejected(workspace: Path) -> None:
-    result = await BashTool(workspace).run(
-        _payload("echo hi", timeout_seconds=9999)
-    )
+    result = await BashTool(workspace).run(_payload("echo hi", timeout_seconds=9999))
 
     assert result.ok is False
     assert "参数校验失败" in result.content
@@ -129,9 +123,7 @@ async def test_timeout_above_max_is_rejected(workspace: Path) -> None:
 
 async def test_long_output_is_truncated(workspace: Path) -> None:
     total = MAX_OUTPUT_LINES + 500
-    result = await BashTool(workspace).run(
-        _payload(_python(f"for i in range({total}): print(i)"))
-    )
+    result = await BashTool(workspace).run(_payload(_python(f"for i in range({total}): print(i)")))
 
     assert result.ok is True
     assert "已截断" in result.content
@@ -164,9 +156,7 @@ async def test_dangerous_command_is_blocked_without_confirmation(workspace: Path
 
 
 async def test_dangerous_command_runs_with_explicit_confirmation(workspace: Path) -> None:
-    result = await BashTool(workspace).run(
-        _payload('echo "rm -rf build"', confirm_dangerous=True)
-    )
+    result = await BashTool(workspace).run(_payload('echo "rm -rf build"', confirm_dangerous=True))
 
     assert result.ok is True
     assert "rm -rf build" in result.content
@@ -194,9 +184,7 @@ async def test_approver_can_reject_dangerous_command(workspace: Path) -> None:
 
 
 async def test_approver_can_allow_dangerous_command(workspace: Path) -> None:
-    result = await BashTool(workspace, approver=lambda _: True).run(
-        _payload('echo "rm -rf build"')
-    )
+    result = await BashTool(workspace, approver=lambda _: True).run(_payload('echo "rm -rf build"'))
 
     assert result.ok is True
     assert "rm -rf build" in result.content
