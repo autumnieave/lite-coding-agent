@@ -91,7 +91,9 @@ def _popen(command: str, cwd: str) -> subprocess.Popen[bytes]:
     return subprocess.Popen(command, **common)
 
 
-# 设计对照：claude-code-from-scratch tools.py:424，差异见 ADR-009
+# Claude Code: Shell 安全靠 AST 解析 + 沙箱，结果选择性裁剪 + 磁盘持久化
+# 参考项目: 降级为正则匹配 + 确认，超时只捕获 TimeoutExpired 不处理子进程树，见 tools.py:424
+# 本实现: 保留正则匹配，但超时按平台终止整棵进程树并补输出解码回退，见 ADR-009
 def _kill_tree(process: subprocess.Popen[bytes]) -> None:
     """终止整棵进程树。"""
     if process.poll() is not None:
