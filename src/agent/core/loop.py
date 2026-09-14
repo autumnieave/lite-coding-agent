@@ -1,0 +1,136 @@
+"""Agent Loop：调 LLM → 执行工具 → 回填结果，直到模型不再请求工具。
+
+依赖约束（见 AGENTS.md 的 C4）：core 不导入 tools。
+工具执行器以 `ToolExecutor` Protocol 的形式注入，`tools.ToolRegistry` 天然满足该协议，
+由 cli 层负责装配。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+from agent.core.llm import (
+    BaseProvider,
+    assistant_message,
+    system_message,
+    tool_result_message,
+    user_message,
+)
+
+COMPLETED = "completed"
+MAX_TURNS_REACHED = "max_turns"
+
+DEFAULT_MAX_TURNS = 10
+EVENT_PREVIEW_LIMIT = 200
+
+DEFAULT_SYSTEM_PROMPT = (
+    "你是一个运行在终端里的 coding agent，可以调用工具查看和修改用户工作区中的文件。"
+    "需要了解文件内容时先调用工具，不要凭空猜测。"
+    "工具返回错误时，请阅读错误信息并调整参数后重试，不要重复同样的调用。"
+    "任务完成后直接给出简洁的结论，不要再调用工具。"
+)
+
+
+class ToolOutcome(Protocol):
+    """工具执行结果的最小结构。`tools.ToolResult` 满足此协议。"""
+
+    ok: bool
+    content: str
+
+
+class ToolExecutor(Protocol):
+    """工具执行器接口。`tools.ToolRegistry` 满足此协议。"""
+
+    def specs(self) -> list[dict[str, Any]]:
+        """返回传给模型的工具定义列表。"""
+
+    async def execute(self, name: str, arguments: str) -> ToolOutcome:
+        """按名称执行工具。实现必须保证失败时返回失败结果而不是抛异常。"""
+
+
+@dataclass(frozen=True, slots=True)
+class LoopResult:
+    """一次任务执行的最终状态。"""
+
+    content: str
+    turns: int
+    stopped_reason: str
+
+    @property
+    def completed(self) -> bool:
+        return self.stopped_reason == COMPLETED
+
+
+def _preview(text: str, limit: int = EVENT_PREVIEW_LIMIT) -> str:
+    """把可能很长的工具输出压成一行，便于在终端展示。"""
+    single_line = " ".join(text.split())
+    if len(single_line) <= limit:
+        return single_line
+    return f"{single_line[:limit]}...（共 {len(single_line)} 字符）"
+
+
+class AgentLoop:
+    """最小 Agent 主循环。
+
+    循环规则只有一条：模型返回 tool_call 就执行并回填，否则结束。
+    工具失败不会中断循环，错误信息会原样回填给模型自行修正。
+    """
+
+    def __init__(
+        self,
+        provider: BaseProvider,
+        tools: ToolExecutor,
+        *,
+        max_turns: int = DEFAULT_MAX_TURNS,
+        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        on_event: Callable[[str], None] | None = None,
+    ) -> None:
+        if max_turns < 1:
+            raise ValueError("max_turns 必须 >= 1")
+        self._provider = provider
+        self._tools = tools
+        self._max_turns = max_turns
+        self._system_prompt = system_prompt
+        self._on_event = on_event
+
+    @property
+    def max_turns(self) -> int:
+        return self._max_turns
+
+    async def run(
+        self,
+        task: str,
+        history: Iterable[Mapping[str, Any]] = (),
+    ) -> LoopResult:
+        """执行一次任务。LLM 调用失败会抛 `LLMError`，工具失败不会。"""
+        messages: list[dict[str, Any]] = [system_message(self._system_prompt)]
+        messages.extend(dict(item) for item in history)
+        messages.append(user_message(task))
+
+        last_content = ""
+        for turn in range(1, self._max_turns + 1):
+            response = await self._provider.chat(messages, tools=self._tools.specs())
+            messages.append(assistant_message(response.content, response.tool_calls))
+            last_content = response.content
+
+            if not response.tool_calls:
+                return LoopResult(content=response.content, turns=turn, stopped_reason=COMPLETED)
+
+            for call in response.tool_calls:
+                result = await self._tools.execute(call.name, call.arguments)
+                self._emit(
+                    f"[第 {turn} 轮] {call.name}({_preview(call.arguments)})"
+                    f" -> {'成功' if result.ok else '失败'}：{_preview(result.content)}"
+                )
+                messages.append(tool_result_message(call.id, result.content))
+
+        self._emit(f"已达最大轮数 {self._max_turns}，主动停止")
+        return LoopResult(
+            content=last_content, turns=self._max_turns, stopped_reason=MAX_TURNS_REACHED
+        )
+
+    def _emit(self, message: str) -> None:
+        if self._on_event is not None:
+            self._on_event(message)
