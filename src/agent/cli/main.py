@@ -15,6 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
+from agent.core.compaction import Compactor
 from agent.core.config import find_env_file, load_env_file
 from agent.core.llm import BaseProvider, LLMConfigError, LLMError, OpenAICompatProvider
 from agent.core.loop import DEFAULT_MAX_TURNS, AgentLoop, LoopResult
@@ -172,12 +173,15 @@ def run_chat(args: argparse.Namespace) -> int:
         return EXIT_USAGE_ERROR
 
     printer = _StreamPrinter(sys.stdout)
+    reporter = _tool_reporter(args.verbose)
+    compactor = Compactor(on_event=reporter)
     loop = AgentLoop(
         provider,
         build_default_registry(root, approver=_build_approver()),
         max_turns=args.max_turns,
-        on_event=_tool_reporter(args.verbose),
+        on_event=reporter,
         on_text=printer,
+        compactor=compactor,
     )
 
     try:
@@ -193,6 +197,9 @@ def run_chat(args: argparse.Namespace) -> int:
     if result.content and not printer.wrote_anything:
         print(result.content)
     printer.finish()
+
+    if args.verbose:
+        print(f"[verbose] 压缩统计：{compactor.stats.summary()}", file=sys.stderr)
 
     if not result.completed:
         print(

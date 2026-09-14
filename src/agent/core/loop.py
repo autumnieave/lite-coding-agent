@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from agent.core.compaction import Compactor
 from agent.core.llm import (
     BaseProvider,
     TextCallback,
@@ -88,8 +89,12 @@ class AgentLoop:
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         on_event: Callable[[str], None] | None = None,
         on_text: TextCallback | None = None,
+        compactor: Compactor | None = None,
     ) -> None:
-        """`on_event` 接收工具进度，`on_text` 接收模型增量输出。"""
+        """`on_event` 接收工具进度，`on_text` 接收模型增量输出。
+
+        `compactor` 为 None 时不做任何压缩；传入后每次 LLM 调用前压一次历史。
+        """
         if max_turns < 1:
             raise ValueError("max_turns 必须 >= 1")
         self._provider = provider
@@ -98,6 +103,7 @@ class AgentLoop:
         self._system_prompt = system_prompt
         self._on_event = on_event
         self._on_text = on_text
+        self._compactor = compactor
 
     @property
     def max_turns(self) -> int:
@@ -115,9 +121,13 @@ class AgentLoop:
 
         last_content = ""
         for turn in range(1, self._max_turns + 1):
+            if self._compactor is not None:
+                messages = await self._compactor.compact(messages)
             response = await self._provider.chat_stream(
                 messages, tools=self._tools.specs(), on_text=self._on_text
             )
+            if self._compactor is not None:
+                self._compactor.note_api_call()
             messages.append(assistant_message(response.content, response.tool_calls))
             last_content = response.content
 
