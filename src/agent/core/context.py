@@ -66,13 +66,3 @@ def budget_ratio(
     if context_window <= 0:
         return 0.0
     return estimate_tokens(messages) / context_window
-
-
-def should_compact(
-    messages: Iterable[Mapping[str, Any]],
-    *,
-    context_window: int = DEFAULT_CONTEXT_WINDOW,
-    threshold: float = DEFAULT_COMPACT_THRESHOLD,
-) -> bool:
-    """是否越过压缩触发线（默认窗口的 60%）。"""
-    return budget_ratio(messages, context_window=context_window) >= threshold

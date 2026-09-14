@@ -13,7 +13,6 @@ from agent.core.context import (
     estimate_message_tokens,
     estimate_tokens,
     message_text,
-    should_compact,
 )
 from agent.core.llm import assistant_message, system_message, tool_result_message, user_message
 
@@ -92,39 +91,31 @@ def test_normal_conversation_mix_of_roles() -> None:
     assert estimate_tokens(messages) == 400
 
 
-# ---------- 触发判断 ----------
+# ---------- 比例与触发线 ----------
 
 
-def test_does_not_trigger_on_empty_conversation() -> None:
-    assert should_compact([]) is False
+def test_budget_ratio_is_zero_for_empty_conversation() -> None:
+    assert budget_ratio([], context_window=1000) == 0.0
 
 
-def test_does_not_trigger_below_threshold() -> None:
-    # 窗口 1000，阈值 0.6 -> 需要 600 token；这里只给约 500
-    messages = [_message("a" * 2000)]
-    assert should_compact(messages, context_window=1000) is False
-
-
-def test_triggers_at_exact_threshold() -> None:
-    # 恰好 600 token = 2400 字符
+def test_budget_ratio_reaches_the_trigger_line_exactly() -> None:
+    # 窗口 1000，触发线 0.6 需要 600 token = 2400 字符
     messages = [_message("a" * 2400)]
-    assert should_compact(messages, context_window=1000) is True
+    assert budget_ratio(messages, context_window=1000) == pytest.approx(DEFAULT_COMPACT_THRESHOLD)
 
 
-def test_triggers_above_threshold() -> None:
-    messages = [_message("a" * 4000)]
-    assert should_compact(messages, context_window=1000) is True
+def test_budget_ratio_stays_below_the_trigger_line() -> None:
+    messages = [_message("a" * 2000)]  # 约 500 token
+    assert budget_ratio(messages, context_window=1000) < DEFAULT_COMPACT_THRESHOLD
 
 
-def test_custom_threshold_is_respected() -> None:
-    messages = [_message("a" * 2400)]  # 600 token
-    assert should_compact(messages, context_window=1000, threshold=0.9) is False
-    assert should_compact(messages, context_window=1000, threshold=0.5) is True
+def test_budget_ratio_above_the_trigger_line() -> None:
+    messages = [_message("a" * 4000)]  # 1000 token = 整个窗口
+    assert budget_ratio(messages, context_window=1000) > DEFAULT_COMPACT_THRESHOLD
 
 
 def test_zero_context_window_does_not_crash() -> None:
     assert budget_ratio([_message("a" * 400)], context_window=0) == 0.0
-    assert should_compact([_message("a" * 400)], context_window=0) is False
 
 
 def test_non_zero_window_but_empty_conversation() -> None:
