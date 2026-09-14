@@ -23,7 +23,7 @@
 | `src/agent/cli/` | 命令行入口、参数解析、终端渲染、依赖装配 | 不实现业务逻辑，只做装配与呈现 |
 | `tests/` | 单元测试与集成测试 | 不发真实 LLM 请求，一律用 fake/mock |
 
-依赖方向单向：`cli → core → tools`，`cli → memory`。
+依赖方向：`cli` 是装配层，依赖 `core`、`tools`、`memory`；`core` **不导入** `tools`，工具执行器以 Protocol 形式注入（见 `core/loop.py` 的 `ToolExecutor`）；`tools` 不导入 `core`。
 
 ## 禁止事项
 
