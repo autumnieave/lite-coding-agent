@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from agent.tools.base import Tool, ToolError, ToolResult, resolve_path
+from agent.tools.tracking import FileTracker
 
 MAX_LINES = 2000
 
@@ -24,8 +25,14 @@ class ReadFileTool(Tool):
     )
     args_model = ReadFileArgs
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, tracker: FileTracker | None = None) -> None:
+        """`tracker` 用于把「读过哪些文件」共享给 `edit_file`。
+
+        单独构造本工具时会拿到一个私有 tracker（读记录不会被别的工具看到）；
+        正常使用请走 `build_default_registry`，它给读写工具注入同一个实例。
+        """
         self._root = Path(root)
+        self._tracker = tracker if tracker is not None else FileTracker()
 
     async def execute(self, args: ReadFileArgs) -> ToolResult:
         path = resolve_path(self._root, args.path)
@@ -36,6 +43,7 @@ class ReadFileTool(Tool):
 
         text = await asyncio.to_thread(path.read_text, encoding="utf-8", errors="replace")
         lines = text.splitlines()
+        self._tracker.record(path)
         if len(lines) > MAX_LINES:
             head = "\n".join(lines[:MAX_LINES])
             return ToolResult.success(
