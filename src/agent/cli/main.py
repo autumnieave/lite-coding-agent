@@ -13,6 +13,7 @@ import asyncio
 import sys
 from pathlib import Path
 
+from agent.core.config import find_env_file, load_env_file
 from agent.core.llm import LLMConfigError, LLMError, OpenAICompatProvider
 from agent.core.loop import DEFAULT_MAX_TURNS, AgentLoop
 from agent.tools import build_default_registry
@@ -75,6 +76,19 @@ def run_chat(args: argparse.Namespace) -> int:
     if not root.is_dir():
         print(f"错误：工作区目录不存在或不是目录：{args.root}", file=sys.stderr)
         return EXIT_USAGE_ERROR
+
+    env_path = find_env_file(Path.cwd())
+    injected: dict[str, str] = {}
+    if env_path is not None:
+        try:
+            injected = load_env_file(env_path)
+        except OSError as exc:
+            print(f"警告：无法读取 {env_path}：{exc}", file=sys.stderr)
+    if args.verbose and injected:
+        print(
+            f"[verbose] 已从 {env_path} 注入环境变量：{', '.join(sorted(injected))}",
+            file=sys.stderr,
+        )
 
     try:
         provider = OpenAICompatProvider.from_env()
