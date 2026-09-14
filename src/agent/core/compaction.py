@@ -159,6 +159,8 @@ class CompactionStats:
     """压缩事件集合。"""
 
     events: list[CompactionEvent] = field(default_factory=list)
+    replenished: int = 0
+    """累计被补录的约束条数（压缩后校验发现摘要漏掉、按原文补回的）。"""
 
     def add(self, event: CompactionEvent) -> None:
         self.events.append(event)
@@ -582,6 +584,7 @@ class Compactor:
             # 摘要失败就保持原样，宁可多占 token 也不能把历史丢空。
             return messages
         summary, replenished = self.ensure_constraints(summary)
+        self._stats.replenished += replenished
         result = compose_summary(older, recent, summary)
         detail = f"{len(older)} 条历史压成 1 条摘要，保留最近 {len(recent)} 条"
         if replenished:
