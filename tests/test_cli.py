@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,9 @@ def test_missing_api_key_returns_config_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], workspace: Path
 ) -> None:
     monkeypatch.delenv("LLM_API_KEY", raising=False)
+    # 屏蔽开发机上真实存在的 .env，保证用例与环境无关
+    monkeypatch.setattr(cli, "find_env_file", lambda *args, **kwargs: None)
+
     code = cli.main(["chat", "任务", "--root", str(workspace)])
     assert code == cli.EXIT_USAGE_ERROR
     assert "LLM_API_KEY" in capsys.readouterr().err
@@ -230,6 +234,77 @@ def test_max_turns_reached_returns_one(
     captured = capsys.readouterr()
     assert code == cli.EXIT_TASK_FAILED
     assert "最大轮数" in captured.err
+
+
+def test_env_file_is_searched_from_cwd(monkeypatch: pytest.MonkeyPatch, workspace: Path) -> None:
+    searched: list[Path] = []
+
+    def _record(start: Path, **kwargs: object) -> None:
+        searched.append(start)
+        return None
+
+    monkeypatch.setattr(cli, "find_env_file", _record)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="ok")]))
+
+    cli.main(["chat", "任务", "--root", str(workspace)])
+
+    assert searched == [Path.cwd()]
+
+
+def test_env_file_values_reach_the_environment(
+    monkeypatch: pytest.MonkeyPatch, workspace: Path, tmp_path: Path
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("LLM_API_KEY=from-dotenv\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "find_env_file", lambda *args, **kwargs: env_file)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="ok")]))
+
+    code = cli.main(["chat", "任务", "--root", str(workspace)])
+
+    assert code == cli.EXIT_OK
+    assert os.environ.get("LLM_API_KEY") == "from-dotenv"
+
+
+def test_verbose_reports_injected_env_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    workspace: Path,
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("LLM_API_KEY=x\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "find_env_file", lambda *args, **kwargs: env_file)
+    monkeypatch.setattr(cli, "load_env_file", lambda path, **kwargs: {"LLM_API_KEY": "x"})
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="ok")]))
+
+    cli.main(["chat", "任务", "--root", str(workspace), "--verbose"])
+
+    captured = capsys.readouterr()
+    assert "已从" in captured.err
+    assert "LLM_API_KEY" in captured.err
+    # 不应打印密钥值
+    assert "from-dotenv" not in captured.err and "=x" not in captured.err
+
+
+def test_unreadable_env_file_warns_but_continues(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    workspace: Path,
+    tmp_path: Path,
+) -> None:
+    def _boom(path: Path, **kwargs: object) -> dict:
+        raise OSError("权限不足")
+
+    monkeypatch.setattr(cli, "find_env_file", lambda *args, **kwargs: tmp_path / ".env")
+    monkeypatch.setattr(cli, "load_env_file", _boom)
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="ok")]))
+
+    code = cli.main(["chat", "任务", "--root", str(workspace)])
+
+    assert code == cli.EXIT_OK
+    assert "无法读取" in capsys.readouterr().err
 
 
 def test_llm_error_returns_one(

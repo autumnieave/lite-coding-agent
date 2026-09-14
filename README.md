@@ -74,7 +74,8 @@ export LLM_BASE_URL="https://api.deepseek.com/v1"   # OpenAI 兼容端点，按�
 export LLM_MODEL="deepseek-chat"
 ```
 
-> 当前版本只读取环境变量，不会自动加载 `.env` 文件。
+> 配置优先级：**已存在的环境变量 > `.env` 文件**。CLI 会从当前目录起向上最多 5 层查找 `.env`，
+> 三种写法都支持：`KEY=VALUE`、`export KEY=VALUE`、`$env:KEY=VALUE`（PowerShell 习惯）。
 
 ### 运行
 
