@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -75,7 +76,19 @@ SUMMARY_PREFIX = "[历史对话摘要]"
 TOOL_ROLE = "tool"
 ASSISTANT_ROLE = "assistant"
 
-_SNIPPABLE = ("read_file", "grep", "list_dir", "bash")
+SNIP_PLACEHOLDER = "[内容已裁剪：同一目标的旧结果，需要时请重新调用工具]"
+MICROCOMPACT_PLACEHOLDER = "[旧结果已清理，需要时请重新调用工具]"
+
+TARGET_FIELDS = {
+    "read_file": "path",
+    "list_dir": "path",
+    "grep": "pattern",
+    "bash": "command",
+}
+"""判断「是不是同一个目标」时取用的参数字段。取不到就不参与去重。"""
+
+COUNT_CAPPED_TOOLS = ("grep", "list_dir", "bash")
+"""按条数封顶的工具：搜索与命令输出会一直堆，读文件则由「同目标去重」兜住。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +215,146 @@ def truncate_tool_messages(
     return result, changed
 
 
+def tool_call_index(messages: Iterable[Mapping[str, Any]]) -> dict[str, tuple[str, str]]:
+    """从 assistant 消息里重建 `tool_call_id -> (工具名, 参数)`。
+
+    压缩只看消息本身，不需要导入 `tools`：工具名与参数都在 tool_calls 里。
+    """
+    index: dict[str, tuple[str, str]] = {}
+    for message in messages:
+        if message.get("role") != ASSISTANT_ROLE:
+            continue
+        for call in message.get("tool_calls") or ():
+            if not isinstance(call, Mapping):
+                continue
+            call_id = call.get("id")
+            function = call.get("function")
+            if not call_id or not isinstance(function, Mapping):
+                continue
+            index[str(call_id)] = (
+                str(function.get("name") or ""),
+                str(function.get("arguments") or ""),
+            )
+    return index
+
+
+def call_target(name: str, arguments: str) -> str | None:
+    """取出这次调用针对的目标（文件路径 / 搜索式 / 命令）。取不到返回 None。"""
+    field = TARGET_FIELDS.get(name)
+    if field is None:
+        return None
+    try:
+        payload = json.loads(arguments)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    value = payload.get(field)
+    return str(value) if value not in (None, "") else None
+
+
+def _tool_positions(
+    messages: Sequence[Mapping[str, Any]],
+    index: Mapping[str, tuple[str, str]],
+) -> list[tuple[int, str, str]]:
+    """列出所有工具结果，返回 `(下标, 工具名, 目标)`。"""
+    result: list[tuple[int, str, str]] = []
+    for position, message in enumerate(messages):
+        if message.get("role") != TOOL_ROLE:
+            continue
+        name, arguments = index.get(str(message.get("tool_call_id")), ("", ""))
+        result.append((position, name, call_target(name, arguments) or ""))
+    return result
+
+
+def _rewrite(
+    messages: Sequence[Mapping[str, Any]],
+    hits: Mapping[int, str],
+) -> tuple[list[dict[str, Any]], int]:
+    """把命中下标的消息内容换成占位文本，返回新列表与改写条数。"""
+    result: list[dict[str, Any]] = []
+    changed = 0
+    for position, message in enumerate(messages):
+        item = dict(message)
+        placeholder = hits.get(position)
+        if placeholder is not None:
+            content = item.get("content")
+            # 内容比占位文本还短时不做替换：那不叫压缩，叫变长。
+            if isinstance(content, str) and len(content) > len(placeholder):
+                item["content"] = placeholder
+                changed += 1
+        result.append(item)
+    return result, changed
+
+
+def snip_duplicate_results(
+    messages: Sequence[Mapping[str, Any]],
+    *,
+    keep_recent_results: int = DEFAULT_KEEP_RECENT_RESULTS,
+) -> tuple[list[dict[str, Any]], int]:
+    """Tier 2：把过时的工具结果换成占位文本。
+
+    两条规则：
+    1. 同一个目标（同一文件路径 / 同一搜索式 / 同一条命令）重复调用过，
+       只保留最新一次，旧的换掉；
+    2. 搜索与命令类工具（见 COUNT_CAPPED_TOOLS）的结果超过 keep_recent_results 条时，
+       只保留最新的几条——这类输出会一直堆且很少再被回看。
+
+    最近 keep_recent_results 条工具结果永远保留。只动工具结果本身，
+    assistant 的 tool_calls 原样保留——模型仍知道自己调用过什么。
+    """
+    index = tool_call_index(messages)
+    entries = _tool_positions(messages, index)
+    protected: set[int] = set()
+    if keep_recent_results > 0:
+        protected = {position for position, _, _ in entries[-keep_recent_results:]}
+
+    hits: dict[int, str] = {}
+
+    # 规则 1：同一目标只留最新一次
+    latest_by_target: dict[tuple[str, str], int] = {}
+    for position, name, target in entries:
+        if not target:
+            continue
+        latest_by_target[(name, target)] = position
+    for position, name, target in entries:
+        if not target:
+            continue
+        if latest_by_target[(name, target)] != position:
+            hits[position] = SNIP_PLACEHOLDER
+
+    # 规则 2：搜索/命令这类结果过多时，只留最新几条
+    by_tool: dict[str, list[int]] = {}
+    for position, name, _ in entries:
+        if name in COUNT_CAPPED_TOOLS:
+            by_tool.setdefault(name, []).append(position)
+    for positions in by_tool.values():
+        cut = max(0, len(positions) - keep_recent_results)
+        for position in positions[:cut]:
+            hits[position] = SNIP_PLACEHOLDER
+
+    for position in protected:
+        hits.pop(position, None)
+    if not hits:
+        return [dict(item) for item in messages], 0
+    return _rewrite(messages, hits)
+
+
+def clear_stale_results(
+    messages: Sequence[Mapping[str, Any]],
+    *,
+    keep_recent_results: int = DEFAULT_KEEP_RECENT_RESULTS,
+) -> tuple[list[dict[str, Any]], int]:
+    """Tier 3：除最近几条外，所有工具结果一律清空。"""
+    entries = _tool_positions(messages, tool_call_index(messages))
+    if keep_recent_results > 0:
+        entries = entries[:-keep_recent_results]
+    hits = {position: MICROCOMPACT_PLACEHOLDER for position, _, _ in entries}
+    if not hits:
+        return [dict(item) for item in messages], 0
+    return _rewrite(messages, hits)
+
+
 def summary_message(summary: str) -> dict[str, Any]:
     """把摘要包装成注入用的 system message。"""
     return system_message(f"{SUMMARY_PREFIX}\n{summary}")
@@ -281,16 +434,54 @@ class Compactor:
     async def compact(self, messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         """返回压缩后的消息列表，输入不被修改。"""
         result = [dict(item) for item in messages]
-        ratio = budget_ratio(result, context_window=self._config.context_window)
-        if ratio < self._config.trigger_ratio:
+        if self._ratio(result) < self._config.trigger_ratio:
             return result
-        result = self._run_tier1(result, ratio)
+        result = self._run_tier1(result)
+        result = self._run_tier2(result)
+        result = self._run_tier3(result)
         if self._summarize is not None and self._should_summarize(result):
             result = await self._run_tier4(result)
         return result
 
-    def _run_tier1(self, messages: list[dict[str, Any]], ratio: float) -> list[dict[str, Any]]:
-        budget = self._config.budget_for(ratio)
+    def _ratio(self, messages: Sequence[Mapping[str, Any]]) -> float:
+        return budget_ratio(messages, context_window=self._config.context_window)
+
+    def _run_tier2(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """便宜的局部清理先跑；压到线以下就不必再动。"""
+        if self._ratio(messages) < self._config.trigger_ratio:
+            return messages
+        started = time.perf_counter()
+        result, changed = snip_duplicate_results(
+            messages, keep_recent_results=self._config.keep_recent_results
+        )
+        if not changed:
+            return result
+        self._record(TIER2, messages, result, started, f"裁剪 {changed} 条过时工具结果")
+        return result
+
+    def _run_tier3(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """只在「确实空闲过」且上下文仍然吃紧时才清。"""
+        if not self._is_idle() or self._ratio(messages) < self._config.trigger_ratio:
+            return messages
+        started = time.perf_counter()
+        result, changed = clear_stale_results(
+            messages, keep_recent_results=self._config.keep_recent_results
+        )
+        if not changed:
+            return result
+        self._record(TIER3, messages, result, started, f"清理 {changed} 条旧工具结果")
+        return result
+
+    def _is_idle(self) -> bool:
+        """距上次 API 调用是否已超过空闲阈值。没调用过就不算空闲。"""
+        if self._last_api_call is None:
+            return False
+        return (self._clock() - self._last_api_call) >= self._config.idle_seconds
+
+    def _run_tier1(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if self._ratio(messages) < self._config.trigger_ratio:
+            return messages
+        budget = self._config.budget_for(self._ratio(messages))
         started = time.perf_counter()
         result, changed = truncate_tool_messages(messages, budget_chars=budget)
         if not changed:
@@ -306,8 +497,7 @@ class Compactor:
 
     def _should_summarize(self, messages: Sequence[Mapping[str, Any]]) -> bool:
         """压缩完便宜的那几层之后，仍逼近窗口上限才动用 Tier 4。"""
-        ratio = budget_ratio(messages, context_window=self._config.context_window)
-        return ratio >= self._config.summarize_ratio
+        return self._ratio(messages) >= self._config.summarize_ratio
 
     @staticmethod
     def _has_new_material(older: Sequence[Mapping[str, Any]]) -> bool:
