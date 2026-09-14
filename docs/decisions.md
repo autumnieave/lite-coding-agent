@@ -106,3 +106,36 @@
 - 已用最小脚本复现（两次顺序流式调用即可稳定触发），排除偶发。
 
 **结果**：演示多轮任务时结尾会多出一段与被演示功能无关的 traceback，需在演示说明中标注，避免被误判成程序 bug。待办：确认上游是否修复；若影响演示，再评估 `openai<3` 或自定义 transport。
+
+## ADR-008：edit_file 用「唯一性校验 + read-before-edit + mtime 防护」三重约束
+
+**背景**：模型改文件时最容易犯两类错：一是凭记忆写出文件里并不存在的原文，二是要替换的片段在文件中出现多次、结果改错了地方。参考实现 `claude-code-from-scratch/python/mini_claude/tools.py` 的 `_find_actual_string`（第 265 行）与 `_edit_file`（第 290 行）覆盖了这两类错误的一半：0 次报 `old_string not found`，多次报 `found N times, must be unique`，并额外做了弯引号到直引号的归一。
+
+**决策**：保留参考实现的匹配与报错语义，另加两道它没有的防线。
+- 唯一性校验：0 次报「未找到」并提示先 `read_file` 核对缩进与换行；多次报「出现了 N 次」并**列出每次出现的起始行号**，要求扩展上下文使其唯一。
+- read-before-edit：`read_file` 成功时把文件快照写进 `FileTracker`；`edit_file` 拿不到快照直接拒绝。
+- mtime 防护：写入前比对 `mtime_ns` 与字节数，读后被外部改过则要求重读。
+- 引号归一：沿用参考实现的思路，但只在归一确实改变了字符串时才做二次匹配，省掉无谓扫描。
+
+**理由**：
+- 参考实现的报错只说「出现了 N 次」，模型拿不到位置信息，只能盲目扩大 `old_string` 反复试；给出行号能让它一次改对。
+- 参考实现没有 read-before-edit 与 mtime 防护。单轮 CLI 里问题不大，但一旦引入压缩与多轮长任务，模型可能基于已被压缩掉的旧内容下手，改错的代价显著上升。
+- 差异刻意控制在「更严」而不是「更聪明」：不擅自改写 `new_string`，引号只用于定位、写入保持原样，避免静默篡改用户内容。
+
+**结果**：`tests/test_edit_file.py` 22 个用例覆盖唯一匹配、多次匹配、未找到、未读先编辑、mtime 变更、引号归一、路径越界等。代价是多了一个 `FileTracker`，必须在 `build_default_registry` 里显式共享，否则读写工具各持一份、read-before-edit 会永远失败。
+
+## ADR-009：bash 超时改为终止整棵进程树
+
+**背景**：第一版直接用 `subprocess.run(command, shell=True, timeout=T)`，与参考实现 `tools.py:424` 的 `_run_shell` 一致。实测发现超时形同虚设：Windows 上 `subprocess.run` 超时后只终止 `cmd.exe`，真正的子进程（例如 `python -c "time.sleep(60)"`）继续存活并占着 stdout/stderr 管道，`communicate()` 必须等到管道关闭才返回。表现为设了 `timeout_seconds=2` 的命令实际耗时 30 秒——正好是测试里子进程的睡眠时长，整个测试套件被拖到 31.5 秒。
+
+**决策**：不再直接用 `subprocess.run`，改为 `Popen` + 手动等待 + 整棵进程树终止。
+- 启动时让子进程进入独立进程组/会话：Windows 用 `CREATE_NEW_PROCESS_GROUP`，POSIX 用 `start_new_session=True`。
+- 超时后按平台终止整棵树：Windows 走 `taskkill /F /T /PID`，POSIX 走 `os.killpg(os.getpgid(pid), SIGKILL)`，失败再退回 `process.kill()`。
+- 终止后再给 `communicate(timeout=5)` 一次机会回收管道，然后才抛错，由上层转成 `ToolError` 回填给模型。
+
+**理由**：
+- 只杀 shell 等于没杀：`shell=True` 下 shell 只是外壳，真正执行命令的是它的子进程，`Popen.kill()` 只作用于前者。
+- 参考实现有同样缺陷，但它的场景是交互式 REPL、单次调用，超时被拖长不易察觉；本项目要在测试里断言超时行为，问题立刻暴露。
+- 顺带修了配套的编码问题：Windows 中文环境下 `cmd` 内建命令输出 GBK、`git` 等工具输出 UTF-8，只认一种必然有一半乱码，改为 UTF-8 优先、失败退回 `locale.getpreferredencoding()`。
+
+**结果**：超时真正生效，测试套件从 31.5 秒降到约 6 秒；`test_timeout_actually_stops_the_command` 用计时断言（<20s）把这条行为钉住，防止将来回退。
