@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import TextIO
 
 from agent.core.config import find_env_file, load_env_file
-from agent.core.llm import LLMConfigError, LLMError, OpenAICompatProvider
-from agent.core.loop import DEFAULT_MAX_TURNS, AgentLoop
+from agent.core.llm import BaseProvider, LLMConfigError, LLMError, OpenAICompatProvider
+from agent.core.loop import DEFAULT_MAX_TURNS, AgentLoop, LoopResult
 from agent.tools import DangerApprover, build_default_registry
 
 __version__ = "0.1.0"
@@ -104,6 +104,17 @@ class _StreamPrinter:
             self._stream.flush()
 
 
+async def _run_task(loop: AgentLoop, task: str, provider: BaseProvider) -> LoopResult:
+    """在同一个事件循环里跑任务并释放 provider 连接。
+
+    分开写是为了保证 `aclose()` 发生在循环还活着的时候。
+    """
+    try:
+        return await loop.run(task)
+    finally:
+        await provider.aclose()
+
+
 def _build_approver() -> DangerApprover | None:
     """交互式终端里才提供危险命令确认，管道/CI 下退化为模型显式确认。"""
     if not sys.stdin.isatty():
@@ -170,7 +181,7 @@ def run_chat(args: argparse.Namespace) -> int:
     )
 
     try:
-        result = asyncio.run(loop.run(args.task))
+        result = asyncio.run(_run_task(loop, args.task, provider))
     except LLMError as exc:
         print(f"LLM 调用失败：{exc}", file=sys.stderr)
         return EXIT_TASK_FAILED

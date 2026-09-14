@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import inspect
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
@@ -108,6 +110,25 @@ class BaseProvider(ABC):
             on_text(response.content)
         return response
 
+    async def aclose(self) -> None:
+        """释放底层连接。默认无事可做，持有连接池的实现应当覆盖。"""
+        return None
+
+
+async def _close_stream(stream: Any) -> None:
+    """显式关闭 SSE 流。
+
+    不关的话，事件循环退出时 httpcore 还在回收 async generator，
+    会在 stderr 上抛「generator didn't stop after athrow()」这类噪音。
+    """
+    close = getattr(stream, "close", None)
+    if close is None:
+        return
+    with contextlib.suppress(Exception):
+        result = close()
+        if inspect.isawaitable(result):
+            await result
+
 
 def _merge_tool_call(accumulator: dict[int, dict[str, str]], raw: Any) -> None:
     """拼装流式返回的 tool_call 分片。
@@ -197,19 +218,22 @@ class OpenAICompatProvider(BaseProvider):
         accumulator: dict[int, dict[str, str]] = {}
         try:
             stream = await self._client.chat.completions.create(**payload)
-            async for chunk in stream:
-                choices = getattr(chunk, "choices", None) or []
-                if not choices:
-                    continue
-                delta = getattr(choices[0], "delta", None)
-                if delta is None:
-                    continue
-                text = getattr(delta, "content", None)
-                if text:
-                    chunks.append(text)
-                    on_text(text)
-                for raw_call in getattr(delta, "tool_calls", None) or []:
-                    _merge_tool_call(accumulator, raw_call)
+            try:
+                async for chunk in stream:
+                    choices = getattr(chunk, "choices", None) or []
+                    if not choices:
+                        continue
+                    delta = getattr(choices[0], "delta", None)
+                    if delta is None:
+                        continue
+                    text = getattr(delta, "content", None)
+                    if text:
+                        chunks.append(text)
+                        on_text(text)
+                    for raw_call in getattr(delta, "tool_calls", None) or []:
+                        _merge_tool_call(accumulator, raw_call)
+            finally:
+                await _close_stream(stream)
         except Exception as exc:
             raise LLMError(f"调用 LLM 失败：{type(exc).__name__}: {exc}") from exc
 
@@ -219,6 +243,17 @@ class OpenAICompatProvider(BaseProvider):
             if item["name"]
         )
         return LLMResponse(content="".join(chunks), tool_calls=calls)
+
+    async def aclose(self) -> None:
+        """关闭底层 HTTP 客户端。
+
+        不在事件循环结束前关掉的话，连接池里的响应流会在循环关闭之后被 GC，
+        于是 stderr 上冒出一堆「generator didn't stop after athrow()」。
+        """
+        with contextlib.suppress(Exception):
+            result = self._client.close()
+            if inspect.isawaitable(result):
+                await result
 
     @staticmethod
     def _to_response(response: Any) -> LLMResponse:
