@@ -24,6 +24,8 @@ from agent.core.llm import (
 COMPLETED = "completed"
 MAX_TURNS_REACHED = "max_turns"
 
+SYSTEM_ROLE = "system"
+
 DEFAULT_MAX_TURNS = 10
 EVENT_PREVIEW_LIMIT = 200
 
@@ -59,6 +61,12 @@ class LoopResult:
     content: str
     turns: int
     stopped_reason: str
+    messages: tuple[dict[str, Any], ...] = ()
+    """本次任务的完整消息序列（含工具结果）。
+
+    压缩后的形态也在这里：把它接回下一次 `run(history=...)`，
+    就能在不重复实现循环的前提下跑多轮会话。
+    """
 
     @property
     def completed(self) -> bool:
@@ -115,8 +123,13 @@ class AgentLoop:
         history: Iterable[Mapping[str, Any]] = (),
     ) -> LoopResult:
         """执行一次任务。LLM 调用失败会抛 `LLMError`，工具失败不会。"""
-        messages: list[dict[str, Any]] = [system_message(self._system_prompt)]
-        messages.extend(dict(item) for item in history)
+        carried = [dict(item) for item in history]
+        if carried and carried[0].get("role") == SYSTEM_ROLE:
+            # 多轮会话：历史里已经带了 system prompt（可能还带着注入的摘要），
+            # 再补一条会逐轮累积成一大堆重复 prompt。
+            messages: list[dict[str, Any]] = carried
+        else:
+            messages = [system_message(self._system_prompt), *carried]
         messages.append(user_message(task))
 
         last_content = ""
@@ -132,7 +145,12 @@ class AgentLoop:
             last_content = response.content
 
             if not response.tool_calls:
-                return LoopResult(content=response.content, turns=turn, stopped_reason=COMPLETED)
+                return LoopResult(
+                    content=response.content,
+                    turns=turn,
+                    stopped_reason=COMPLETED,
+                    messages=tuple(messages),
+                )
 
             # 模型先说了一句话再去调工具：把这一行收尾，
             # 否则下一轮流式输出的文字会接在同一行上。
@@ -151,7 +169,10 @@ class AgentLoop:
 
         self._emit(f"已达最大轮数 {self._max_turns}，主动停止")
         return LoopResult(
-            content=last_content, turns=self._max_turns, stopped_reason=MAX_TURNS_REACHED
+            content=last_content,
+            turns=self._max_turns,
+            stopped_reason=MAX_TURNS_REACHED,
+            messages=tuple(messages),
         )
 
     def _emit(self, message: str) -> None:
