@@ -17,6 +17,7 @@ from typing import Any, TextIO
 
 from agent.core.compaction import Compactor
 from agent.core.config import find_env_file, load_env_file
+from agent.core.constraints import DEFAULT_FILENAME, ConstraintStore
 from agent.core.llm import BaseProvider, LLMConfigError, LLMError, OpenAICompatProvider
 from agent.core.loop import DEFAULT_MAX_TURNS, AgentLoop, LoopResult
 from agent.tools import DangerApprover, build_default_registry
@@ -25,6 +26,9 @@ __version__ = "0.1.0"
 
 AGENT_DESCRIPTION = "lite-coding-agent: 一个最小的 coding agent 实现。"
 CHAT_DESCRIPTION = "执行一次任务并把结果打印到标准输出"
+
+CONSTRAINTS_DIR = ".lite-agent"
+"""约束落盘目录（相对工作区根目录）。与 Claude Code 的 `.claude/` 同构。"""
 
 EXIT_OK = 0
 EXIT_TASK_FAILED = 1
@@ -184,7 +188,11 @@ def run_chat(args: argparse.Namespace) -> int:
 
     printer = _StreamPrinter(sys.stdout)
     reporter = _tool_reporter(args.verbose)
-    compactor = Compactor(summarize=_summarizer(provider), on_event=reporter)
+    store = ConstraintStore(root / CONSTRAINTS_DIR / DEFAULT_FILENAME)
+    store.load()
+    if args.verbose and len(store):
+        print(f"[verbose] 已加载 {len(store)} 条约束", file=sys.stderr)
+    compactor = Compactor(summarize=_summarizer(provider), constraints=store, on_event=reporter)
     loop = AgentLoop(
         provider,
         build_default_registry(root, approver=_build_approver()),

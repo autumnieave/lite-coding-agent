@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -386,3 +387,52 @@ def test_llm_error_returns_one(
     assert code == cli.EXIT_TASK_FAILED
     assert "网络不可达" in captured.err
     assert captured.out == ""
+
+
+# ---------- 约束存储接线 ----------
+
+
+def _state_file(workspace: Path) -> Path:
+    return workspace / cli.CONSTRAINTS_DIR / "constraints.json"
+
+
+def test_verbose_reports_loaded_constraints(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], workspace: Path
+) -> None:
+    path = _state_file(workspace)
+    path.parent.mkdir()
+    path.write_text(
+        json.dumps(
+            {"constraints": [{"id": "C5", "content": "禁止改迁移", "source": "agents_md"}]},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="答案")]))
+
+    code = cli.main(["chat", "问题", "--root", str(workspace), "--verbose"])
+
+    assert code == cli.EXIT_OK
+    assert "已加载 1 条约束" in capsys.readouterr().err
+
+
+def test_declared_constraints_are_persisted(
+    monkeypatch: pytest.MonkeyPatch, workspace: Path
+) -> None:
+    """用户在任务里声明约束后，即使这轮没触发压缩，也要落盘备查。"""
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="好")]))
+
+    code = cli.main(["chat", "[CONSTRAINT] 代号 R3MJUD：输出必须是 JSON", "--root", str(workspace)])
+
+    assert code == cli.EXIT_OK
+    saved = json.loads(_state_file(workspace).read_text(encoding="utf-8"))
+    assert [item["id"] for item in saved["constraints"]] == ["R3MJUD"]
+
+
+def test_state_dir_stays_clean_when_nothing_is_declared(
+    monkeypatch: pytest.MonkeyPatch, workspace: Path
+) -> None:
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="答案")]))
+
+    assert cli.main(["chat", "普通问题", "--root", str(workspace)]) == cli.EXIT_OK
+    assert not (workspace / cli.CONSTRAINTS_DIR).exists()
