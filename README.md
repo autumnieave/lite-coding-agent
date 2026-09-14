@@ -55,8 +55,8 @@ flowchart TD
 ### 安装
 
 ```bash
-# TODO: 仓库尚未发布，确认后替换为最终地址
-git clone <repo-url>
+git clone https://github.com/autumnieave/lite-coding-agent.git
+# 网络受限时可用 SSH：git clone git@github.com:autumnieave/lite-coding-agent.git
 cd lite-coding-agent
 python -m venv .venv
 source .venv/bin/activate   # Windows PowerShell: .\.venv\Scripts\Activate.ps1
