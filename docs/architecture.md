@@ -15,24 +15,25 @@ flowchart TB
     subgraph CORE["core"]
         L["loop.py 🚧<br/>Agent Loop"]
         C["context.py 🚧<br/>上下文管理 / 压缩"]
-        S["session.py 📋<br/>消息历史"]
+        CN["constraints.py 📋<br/>约束提取与完整性校验"]
         LM["llm.py 🚧<br/>LLM 客户端抽象"]
     end
     subgraph TOOLS["tools"]
         R["registry.py 🚧<br/>工具注册表"]
-        B["builtin/*.py 🚧<br/>bash / read_file / write_file<br/>edit_file / grep / list_dir"]
+        B["*.py 🚧<br/>bash / read_file / write_file<br/>edit_file / grep / list_dir"]
     end
     subgraph MEMORY["memory"]
         A["agents_md.py 📋<br/>AGENTS.md 加载"]
-        CP["checkpoint.py 📋<br/>会话持久化"]
+        S["session.py 📋<br/>消息历史 / checkpoint"]
     end
     M --> L
     L --> C
+    C --> CN
     L --> LM
     L --> R
     R --> B
     L --> A
-    L --> CP
+    L --> S
     C --> S
 ```
 
@@ -101,8 +102,8 @@ flowchart LR
 | Agent Loop | `src/agent/core/loop.py` | 主循环、工具调用调度、循环终止判断 | 🚧 |
 | LLM 抽象 | `src/agent/core/llm.py` | 统一不同厂商的 API，处理 tool_call 格式差异 | 🚧 |
 | 上下文管理 | `src/agent/core/context.py` | 四层压缩策略、token 预算计算 | 🚧 |
-| 消息历史 | `src/agent/core/session.py` | 消息结构定义与增删改 | 📋 |
+| 约束管理 | `src/agent/core/constraints.py` | 约束提取、独立存储、压缩后完整性校验与自愈 | 📋 |
 | 工具注册表 | `src/agent/tools/registry.py` | 工具注册、JSON Schema 参数校验、分发 | 🚧 |
-| 内置工具 | `src/agent/tools/builtin/` | bash、read_file、write_file、edit_file、grep、list_dir | 🚧 |
+| 内置工具 | `src/agent/tools/*.py` | bash、read_file、write_file、edit_file、grep、list_dir | 🚧 |
 | 项目记忆 | `src/agent/memory/agents_md.py` | 按目录层级加载 `AGENTS.md` 并注入 | 📋 |
-| 会话持久化 | `src/agent/memory/checkpoint.py` | checkpoint 保存与中断恢复 | 📋 |
+| 会话持久化 | `src/agent/memory/session.py` | 消息历史结构定义、checkpoint 保存与中断恢复 | 📋 |

@@ -140,10 +140,8 @@ lite-coding-agent/
 
 ## 参考
 
-<!-- TODO: 补上真实仓库链接 -->
-
-- claude-code-from-scratch —— 架构对照与学习路线
-- How Claude Code Works —— 源码级解析
+- claude-code-from-scratch —— 工具系统与 MCP / 多 Agent 部分作为架构对照
+- How Claude Code Works —— 源码级解析，用于理解 Agent Loop 与上下文压缩
 
 ## License
 
