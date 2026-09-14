@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent.core.constraints import Constraint, ConstraintStore
 from agent.core.context import (
     DEFAULT_COMPACT_THRESHOLD,
     DEFAULT_CONTEXT_WINDOW,
@@ -72,6 +73,18 @@ SUMMARY_INSTRUCTION = (
 
 SUMMARY_PREFIX = "[历史对话摘要]"
 """摘要作为独立 system message 注入时的前缀。"""
+
+CONSTRAINT_RETENTION_HEADING = (
+    "本次会话已登记的硬性约束。摘要必须连同方括号里的 id 逐条原样抄录，不得改写或省略："
+)
+"""摘要 Prompt 里附上约束清单时的引导语。
+
+只写「保留关键约束」是不够的：模型不知道具体是哪几条，摘要里容易只留一句
+「已保留相关约束」，校验时无从下手。把 id 与原文一起给它，校验才有依据。
+"""
+
+REPLENISH_HEADING = "[约束补录] 摘要遗漏了以下约束，现按原文补回，继续遵守："
+"""压缩后发现摘要漏掉约束时，补录块的标题。"""
 
 TOOL_ROLE = "tool"
 ASSISTANT_ROLE = "assistant"
@@ -380,9 +393,26 @@ def split_messages(
     return older, recent
 
 
-def build_summary_request(older: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """构造摘要请求：原始对话 + 一条要求保留四类信息的指令。"""
-    return [system_message(SUMMARY_SYSTEM_PROMPT), *older, user_message(SUMMARY_INSTRUCTION)]
+def build_summary_request(
+    older: Sequence[Mapping[str, Any]],
+    *,
+    constraints: Sequence[Constraint] = (),
+) -> list[dict[str, Any]]:
+    """构造摘要请求：原始对话 + 一条要求保留四类信息的指令。
+
+    传入 `constraints` 时，把清单连同 id 附在指令末尾（保留项 4 的展开）。
+    """
+    instruction = SUMMARY_INSTRUCTION
+    if constraints:
+        listing = "\n".join(item.render() for item in constraints)
+        instruction = f"{instruction}\n\n{CONSTRAINT_RETENTION_HEADING}\n{listing}"
+    return [system_message(SUMMARY_SYSTEM_PROMPT), *older, user_message(instruction)]
+
+
+def replenish_constraints(summary: str, missing: Sequence[Constraint]) -> str:
+    """把摘要漏掉的约束按原文追加回去。"""
+    listing = "\n".join(item.render() for item in missing)
+    return f"{summary}\n\n{REPLENISH_HEADING}\n{listing}"
 
 
 def compose_summary(
@@ -402,6 +432,10 @@ class Compactor:
     供 Tier 3 判断空闲时长。`clock` 可注入，便于测试空闲路径。
 
     `summarize` 是 Tier 4 用的摘要函数；不传则跳过 Tier 4（其余各层照常生效）。
+
+    `constraints` 是约束存储（ADR-004）。传了就启用关键约束保留：压缩前把消息里的
+    `[CONSTRAINT]` 声明收进存储，摘要时把清单交给模型，摘要回来后再校验一遍，
+    漏掉的按原文补录。不传则完全不涉及约束，行为与从前一致。
     """
 
     def __init__(
@@ -409,11 +443,13 @@ class Compactor:
         config: CompactionConfig | None = None,
         *,
         summarize: Summarizer | None = None,
+        constraints: ConstraintStore | None = None,
         clock: Callable[[], float] = time.monotonic,
         on_event: EventSink | None = None,
     ) -> None:
         self._config = config or CompactionConfig()
         self._summarize = summarize
+        self._constraints = constraints
         self._clock = clock
         self._on_event = on_event
         self._last_api_call: float | None = None
@@ -424,6 +460,10 @@ class Compactor:
         return self._config
 
     @property
+    def constraints(self) -> ConstraintStore | None:
+        return self._constraints
+
+    @property
     def stats(self) -> CompactionStats:
         return self._stats
 
@@ -432,8 +472,12 @@ class Compactor:
         self._last_api_call = self._clock()
 
     async def compact(self, messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-        """返回压缩后的消息列表，输入不被修改。"""
+        """返回压缩后的消息列表，输入不被修改。
+
+        先收约束再压缩：声明所在的轮次可能正好被这次摘要吃掉，等摘要跑完再收就晚了。
+        """
         result = [dict(item) for item in messages]
+        self._absorb_constraints(result)
         if self._ratio(result) < self._config.trigger_ratio:
             return result
         result = self._run_tier1(result)
@@ -442,6 +486,22 @@ class Compactor:
         if self._summarize is not None and self._should_summarize(result):
             result = await self._run_tier4(result)
         return result
+
+    def _absorb_constraints(self, messages: Sequence[Mapping[str, Any]]) -> None:
+        """把消息里新出现的 `[CONSTRAINT]` 声明收进存储并落盘。"""
+        if self._constraints is None:
+            return
+        if self._constraints.absorb(messages):
+            self._constraints.save()
+
+    def ensure_constraints(self, summary: str) -> tuple[str, int]:
+        """校验摘要是否漏掉约束，漏了就按原文补录。返回（摘要, 补回条数）。"""
+        if self._constraints is None:
+            return summary, 0
+        missing = self._constraints.verify(summary).missing
+        if not missing:
+            return summary, 0
+        return replenish_constraints(summary, missing), len(missing)
 
     def _ratio(self, messages: Sequence[Mapping[str, Any]]) -> float:
         return budget_ratio(messages, context_window=self._config.context_window)
@@ -515,18 +575,18 @@ class Compactor:
             return messages
         started = time.perf_counter()
         assert self._summarize is not None  # 由调用方保证
-        summary = (await self._summarize(build_summary_request(older)) or "").strip()
+        registered = self._constraints.get_all() if self._constraints is not None else ()
+        request = build_summary_request(older, constraints=registered)
+        summary = (await self._summarize(request) or "").strip()
         if not summary:
             # 摘要失败就保持原样，宁可多占 token 也不能把历史丢空。
             return messages
+        summary, replenished = self.ensure_constraints(summary)
         result = compose_summary(older, recent, summary)
-        self._record(
-            TIER4,
-            messages,
-            result,
-            started,
-            f"{len(older)} 条历史压成 1 条摘要，保留最近 {len(recent)} 条",
-        )
+        detail = f"{len(older)} 条历史压成 1 条摘要，保留最近 {len(recent)} 条"
+        if replenished:
+            detail += f"，补回 {replenished} 条约束"
+        self._record(TIER4, messages, result, started, detail)
         return result
 
     def _record(
