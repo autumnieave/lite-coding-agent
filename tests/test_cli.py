@@ -194,9 +194,10 @@ def test_verbose_writes_events_to_stderr(
     assert "成功" in captured.err
 
 
-def test_non_verbose_writes_no_events(
+def test_non_verbose_reports_tools_tersely(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], workspace: Path
 ) -> None:
+    """工具进度默认就实时上报，但走 stderr，stdout 只留答案。"""
     provider = _ScriptedProvider(
         [
             LLMResponse(
@@ -208,9 +209,76 @@ def test_non_verbose_writes_no_events(
     )
     _use_provider(monkeypatch, provider)
 
-    cli.main(["chat", "列出目录", "--root", str(workspace)])
+    code = cli.main(["chat", "列出目录", "--root", str(workspace)])
 
-    assert capsys.readouterr().err == ""
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_OK
+    assert captured.out == "完成\n"
+    assert "· " in captured.err
+    assert "调用 list_dir" in captured.err
+    assert "结果 list_dir" in captured.err
+    assert "[verbose]" not in captured.err
+
+
+def test_streamed_content_is_not_printed_twice(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], workspace: Path
+) -> None:
+    """模型文本按分片落到 stdout，结尾不会因为补印而重复一遍。"""
+
+    class _StreamingProvider(BaseProvider):
+        async def chat(
+            self,
+            messages: Sequence[Mapping[str, Any]],
+            tools: Sequence[Mapping[str, Any]] | None = None,
+        ) -> LLMResponse:
+            raise AssertionError("启用流式后不应再走非流式 chat")
+
+        async def chat_stream(
+            self,
+            messages: Sequence[Mapping[str, Any]],
+            tools: Sequence[Mapping[str, Any]] | None = None,
+            on_text: object = None,
+        ) -> LLMResponse:
+            for piece in ("你", "好", "世界"):
+                if callable(on_text):
+                    on_text(piece)
+            return LLMResponse(content="你好世界")
+
+    _use_provider(monkeypatch, _StreamingProvider())
+
+    code = cli.main(["chat", "打个招呼", "--root", str(workspace)])
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_OK
+    assert captured.out == "你好世界\n"
+
+
+def test_streamed_content_without_trailing_newline_gets_one(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], workspace: Path
+) -> None:
+    class _StreamingProvider(BaseProvider):
+        async def chat(
+            self,
+            messages: Sequence[Mapping[str, Any]],
+            tools: Sequence[Mapping[str, Any]] | None = None,
+        ) -> LLMResponse:
+            raise AssertionError("应走流式")
+
+        async def chat_stream(
+            self,
+            messages: Sequence[Mapping[str, Any]],
+            tools: Sequence[Mapping[str, Any]] | None = None,
+            on_text: object = None,
+        ) -> LLMResponse:
+            if callable(on_text):
+                on_text("结尾带换行\n")
+            return LLMResponse(content="结尾带换行\n")
+
+    _use_provider(monkeypatch, _StreamingProvider())
+
+    cli.main(["chat", "任务", "--root", str(workspace)])
+
+    assert capsys.readouterr().out == "结尾带换行\n"
 
 
 # ---------- 失败路径 ----------
