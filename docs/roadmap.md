@@ -44,7 +44,7 @@
 | 调试 + commit | 1h | 能演示读→改→跑测试 |
 
 **可演示**：让 Agent 读一个文件、改一行、跑 `pytest`。
-**卡点**：`edit_file` 唯一性校验容易出 bug → 参考 `claude-code-from-scratch` 第 2 章。
+**卡点**：`edit_file` 唯一性校验容易出 bug → 参考 `claude-code-from-scratch` 的工具系统实现。
 **风险应对**：若 edit_file 超时，先只支持唯一匹配，冲突时报错让模型重试。
 
 ---
@@ -93,10 +93,11 @@
 
 | 任务 | 预计耗时 | 验收 |
 |---|---|---|
-| `memory/project.py` AGENTS.md 加载 | 1.5h | 按目录层级查找 |
+| `memory/agents_md.py` AGENTS.md 加载 | 1.5h | 按目录层级查找 |
 | `memory/session.py` checkpoint | 1.5h | `session.jsonl`，kill 后可恢复 |
 | 单测（核心模块） | 2h | loop/context/constraints 覆盖 |
-| README 补架构图 + 评测数据 | 1.5h | Mermaid + 真实数字 |
+| README 架构图 | — | ✅ 已完成（Mermaid 模块图 + Agent Loop 数据流） |
+| README 评测数据 | 1.5h | 待 Day 4 实验产出后填入真实数字 |
 | 演示 GIF | 1h | 30 秒终端交互 |
 | commit 历史整理 | 0.5h | 每天多个 commit |
 
@@ -114,7 +115,7 @@
 |---|---|---|
 | 补前 5 天欠债 | 2h | 所有验收标准打勾 |
 | 约束保留实验扩大到 20 用例 | 2h | 统计违反次数、任务成功率 |
-| `docs/architecture.md` 细化 | 1.5h | 模块图 + 数据流 + 状态标记 |
+| `docs/architecture.md` 与代码同步校验 | 1.5h | 文档中的模块名、状态标记与实际代码一致 |
 | `docs/decisions.md` 补 ADR | 1.5h | 至少 5 条决策记录 |
 | 补边界单测 | 1h | edit_file 冲突、bash 超时 |
 
@@ -134,7 +135,7 @@
 | 子 Agent 隔离 | 4-5h | 独立上下文 + 工具白名单 |
 
 **可演示**：接入一个外部 MCP server，或子 Agent 完成一次隔离任务。
-**卡点**：JSON-RPC 握手不熟 → 参考 `claude-code-from-scratch` 第 10-13 章。
+**卡点**：JSON-RPC 握手不熟 → 参考 `claude-code-from-scratch` 的 MCP / 多 Agent 部分。
 **风险应对**：若时间不够，不做，把第 6 天补扎实。**MCP 和子 Agent 是锦上添花，不是简历必需。**
 
 ---
