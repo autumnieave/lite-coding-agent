@@ -10,7 +10,7 @@
 每组每次都用新的随机代号，避免模型靠规律重建（见 docs/evidence.md 的方法学记录：
 第一版用「轮号 + 字母」的规律串，模型是推出来的而不是读到的，等于没测到信息保留）。
 
-会话结构（18 轮）：
+会话结构（标准档 18 轮）：
 
     1-3    声明 15 条约束，每轮 5 条，格式 `[CONSTRAINT] 代号 XXXXXX：<规则>`
     4-15   读取 12 个文件，把上下文顶过 60% / 85% 两条线，反复触发压缩
@@ -19,8 +19,12 @@
 判定全部脚本化，不靠人工：JSON 能否解析、键名是否 snake_case、有没有代码围栏、
 能答出几个代号、最终上下文里还留着几条约束。
 
+标准档两组都保得住（见 docs/evidence.md 用例五），说明 15 条约束、3~4 次压缩还没到基线的
+失效点。`--profile stress` 把约束加到 40 条、填充轮加到 14，用来找基线真正开始丢东西的位置。
+
 用法：
     .venv\\Scripts\\python scripts/constraint_experiment.py --runs 10 --groups both
+    .venv\\Scripts\\python scripts/constraint_experiment.py --profile stress --runs 10
     .venv\\Scripts\\python scripts/constraint_experiment.py --self-test
 """
 
@@ -65,13 +69,29 @@ GROUPS = (GROUP_ON, GROUP_OFF)
 
 STATE_DIR = ".lite-agent"
 
-DECLARE_TURNS = 3
 CONSTRAINTS_PER_TURN = 5
-FILLER_TURNS = 12
 FILLER_LINES = 200
 """单个文件的行数。调大到 400 时「保留最近 10 条」本身就超过 85%，
 于是每轮都重新摘要（实测一次会话触发 22 次 Tier 4），抖动太大掩盖了要观察的信号。"""
-PROBE_TURNS = 3
+
+
+@dataclass(frozen=True, slots=True)
+class Profile:
+    """一档实验配置：声明多少条约束、中间塞多少轮工具输出。"""
+
+    name: str
+    constraint_count: int
+    filler_turns: int
+
+    @property
+    def declare_turns(self) -> int:
+        return -(-self.constraint_count // CONSTRAINTS_PER_TURN)
+
+
+PROFILES: dict[str, Profile] = {
+    "standard": Profile("standard", 15, 12),
+    "stress": Profile("stress", 40, 14),
+}
 
 CODE_LENGTH = 6
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -120,14 +140,37 @@ def make_code(rng: random.Random) -> str:
     return "".join(rng.choice(CODE_ALPHABET) for _ in range(CODE_LENGTH))
 
 
-def build_constraints(rng: random.Random) -> list[tuple[str, str]]:
-    """生成 15 条「随机代号 + 固定规则」的约束，规则顺序每次打乱。"""
+def synthetic_rules(rng: random.Random, count: int) -> list[str]:
+    """压力档追加的规则：把随机串嵌进模板，保证条条互不相同且可判定。
+
+    这些规则本身不参与输出检查（检查只覆盖 RULES 里那三条），用途是把待保留的
+    约束数量堆到模型一次抄不完的量级。
+    """
+    rules: list[str] = []
+    while len(rules) < count:
+        token = make_code(rng) + make_code(rng)
+        kind = len(rules) % 4
+        if kind == 0:
+            rules.append(f"必须包含字段 field_{token.lower()}")
+        elif kind == 1:
+            rules.append(f"输出中不得出现字符串 {token}")
+        elif kind == 2:
+            rules.append(f"日志前缀必须使用 [{token}]")
+        else:
+            rules.append(f"时间戳必须写成 {token[:4]}-{token[4:6]}-{token[6:8]} 形式")
+    return rules
+
+
+def build_constraints(rng: random.Random, count: int) -> list[tuple[str, str]]:
+    """生成 `count` 条「随机代号 + 规则」的约束，规则顺序每次打乱。"""
     codes: set[str] = set()
-    while len(codes) < len(RULES):
+    while len(codes) < count:
         codes.add(make_code(rng))
     rules = list(RULES)
     rng.shuffle(rules)
-    return list(zip(sorted(codes), rules, strict=True))
+    if count > len(rules):
+        rules += synthetic_rules(rng, count - len(rules))
+    return list(zip(sorted(codes), rules[:count], strict=True))
 
 
 def build_workspace(root: Path, rng: random.Random, parts: Sequence[str]) -> None:
@@ -142,13 +185,14 @@ def build_workspace(root: Path, rng: random.Random, parts: Sequence[str]) -> Non
         path.write_text("\n".join(body), encoding="utf-8")
 
 
-def part_names() -> list[str]:
-    return [f"notes/part{index:02d}.txt" for index in range(1, FILLER_TURNS + 1)]
+def part_names(filler_turns: int) -> list[str]:
+    return [f"notes/part{index:02d}.txt" for index in range(1, filler_turns + 1)]
 
 
 def build_steps(constraints: Sequence[tuple[str, str]], parts: Sequence[str]) -> list[Step]:
     steps: list[Step] = []
-    for turn in range(DECLARE_TURNS):
+    declare_turns = -(-len(constraints) // CONSTRAINTS_PER_TURN)
+    for turn in range(declare_turns):
         chunk = constraints[turn * CONSTRAINTS_PER_TURN : (turn + 1) * CONSTRAINTS_PER_TURN]
         lines = "\n".join(f"{CONSTRAINT_MARKER} 代号 {code}：{content}" for code, content in chunk)
         steps.append(Step("declare", f"以下约束在整个会话期间有效，请记住但不要复述：\n{lines}"))
@@ -230,10 +274,11 @@ async def run_once(
     seed: int,
     provider: BaseProvider,
     max_turns: int,
+    profile: Profile,
 ) -> dict[str, Any]:
     rng = random.Random(seed)
-    constraints = build_constraints(rng)
-    parts = part_names()
+    constraints = build_constraints(rng, profile.constraint_count)
+    parts = part_names(profile.filler_turns)
     root = Path(tempfile.mkdtemp(prefix=f"constraint-{group}-{run_id:02d}-"))
     started = time.perf_counter()
     try:
@@ -272,6 +317,7 @@ async def run_once(
         return {
             "run_id": run_id,
             "group": group,
+            "profile": profile.name,
             "seed": seed,
             "constraints_total": len(constraints),
             "preserved": preserved,
@@ -299,6 +345,7 @@ def aggregate(records: Sequence[Mapping[str, Any]]) -> str:
         "违反检查数 | 任务成功率 | 代号召回率 | Tier 4 次数 |"
     )
     lines = [header, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
+
     for group in GROUPS:
         rows = [item for item in records if item["group"] == group]
         if not rows:
@@ -347,13 +394,23 @@ def self_test() -> int:
     assert len(codes) > 190, "随机代号应当足够分散"
     assert all(len(code) == CODE_LENGTH for code in codes)
 
-    steps = build_steps(build_constraints(random.Random(1)), part_names())
-    kinds = [step.kind for step in steps]
-    assert kinds.count("declare") == DECLARE_TURNS
-    assert kinds.count("fill") == FILLER_TURNS
-    assert kinds.count("probe_json") == 1
-    merged = "\n".join(step.text for step in steps if step.kind == "declare")
-    assert merged.count(CONSTRAINT_MARKER) == len(RULES)
+    for profile in PROFILES.values():
+        generated = build_constraints(random.Random(7), profile.constraint_count)
+        assert len(generated) == profile.constraint_count
+        assert len({code for code, _ in generated}) == profile.constraint_count, "代号必须唯一"
+        assert len({content for _, content in generated}) == profile.constraint_count, (
+            "规则必须唯一"
+        )
+        steps = build_steps(generated, part_names(profile.filler_turns))
+        kinds = [step.kind for step in steps]
+        assert kinds.count("declare") == profile.declare_turns
+        assert kinds.count("fill") == profile.filler_turns
+        assert kinds.count("probe_json") == 1
+        merged = "\n".join(step.text for step in steps if step.kind == "declare")
+        assert merged.count(CONSTRAINT_MARKER) == profile.constraint_count
+
+    strict = build_constraints(random.Random(3), PROFILES["standard"].constraint_count)
+    assert all(content in RULES for _, content in strict), "标准档只用固定规则"
 
     print("self-test 通过：判定逻辑与数据构造符合预期")
     return 0
@@ -369,6 +426,7 @@ async def main_async(args: argparse.Namespace) -> int:
         load_env_file(env_path)
     provider = OpenAICompatProvider.from_env()
 
+    profile = PROFILES[args.profile]
     jobs = [
         (run_id, group, args.seed + run_id * 1000 + offset)
         for offset, group in enumerate(args.groups)
@@ -387,6 +445,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 seed=seed,
                 provider=provider,
                 max_turns=args.max_turns,
+                profile=profile,
             )
 
     try:
@@ -416,6 +475,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="跑哪些组，默认 both",
     )
     parser.add_argument("--seed", type=int, default=20260914, help="随机种子基数")
+    parser.add_argument(
+        "--profile",
+        choices=tuple(PROFILES),
+        default="standard",
+        help="实验档位：standard 15 条约束 / stress 40 条，默认 %(default)s",
+    )
     parser.add_argument("--concurrency", type=int, default=4, help="并发会话数")
     parser.add_argument("--max-turns", type=int, default=4, help="单次任务的 LLM 轮数上限")
     parser.add_argument("--out", default=str(DEFAULT_OUT), help="逐次记录写入的 JSONL 路径")
