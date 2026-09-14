@@ -91,6 +91,7 @@ def _popen(command: str, cwd: str) -> subprocess.Popen[bytes]:
     return subprocess.Popen(command, **common)
 
 
+# 设计对照：claude-code-from-scratch tools.py:424，差异见 ADR-009
 def _kill_tree(process: subprocess.Popen[bytes]) -> None:
     """终止整棵进程树。"""
     if process.poll() is not None:

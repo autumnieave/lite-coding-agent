@@ -32,6 +32,7 @@ def _normalize_quotes(text: str) -> str:
     return re.sub("[\u201c\u201d\u2033]", '"', text)
 
 
+# 设计对照：claude-code-from-scratch tools.py:265，差异见 ADR-008
 def _find_actual_string(content: str, search: str) -> str | None:
     """在文件内容中定位 search，返回文件中真实存在的那段文本。
 
