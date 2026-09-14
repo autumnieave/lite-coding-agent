@@ -235,9 +235,7 @@ async def test_chat_stream_emits_incremental_text() -> None:
     client = _FakeClient(response=_FakeStream([_delta_chunk("你"), _delta_chunk("好")]))
     received: list[str] = []
 
-    response = await _provider(client).chat_stream(
-        [user_message("hi")], on_text=received.append
-    )
+    response = await _provider(client).chat_stream([user_message("hi")], on_text=received.append)
 
     assert received == ["你", "好"]
     assert response.content == "你好"
@@ -246,9 +244,7 @@ async def test_chat_stream_emits_incremental_text() -> None:
 
 async def test_chat_stream_skips_chunks_without_choices() -> None:
     client = _FakeClient(
-        response=_FakeStream(
-            [_delta_chunk("答"), SimpleNamespace(choices=[]), _delta_chunk("案")]
-        )
+        response=_FakeStream([_delta_chunk("答"), SimpleNamespace(choices=[]), _delta_chunk("案")])
     )
     received: list[str] = []
 
@@ -263,9 +259,7 @@ async def test_chat_stream_assembles_tool_call_fragments() -> None:
     client = _FakeClient(
         response=_FakeStream(
             [
-                _delta_chunk(
-                    tool_calls=[_tool_call_delta(0, "call_1", "read_file", '{"path": ')]
-                ),
+                _delta_chunk(tool_calls=[_tool_call_delta(0, "call_1", "read_file", '{"path": ')]),
                 _delta_chunk(tool_calls=[_tool_call_delta(0, None, None, '"a.txt"}')]),
             ]
         )
@@ -323,6 +317,7 @@ async def test_chat_stream_wraps_errors_in_llm_error() -> None:
 
     with pytest.raises(LLMError, match="断网"):
         await _provider(client).chat_stream([user_message("hi")], on_text=lambda _: None)
+
 
 async def test_chat_stream_closes_the_stream() -> None:
     """流必须显式关闭，否则事件循环退出时会残留 async generator 报错。"""

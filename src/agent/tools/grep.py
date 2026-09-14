@@ -55,9 +55,7 @@ class GrepTool(Tool):
                 f"无效的正则表达式：{exc}。请检查括号、方括号与转义是否配对后重试。"
             ) from exc
 
-        matches, hidden = await asyncio.to_thread(
-            self._search, base, pattern, args.include
-        )
+        matches, hidden = await asyncio.to_thread(self._search, base, pattern, args.include)
         if not matches:
             return ToolResult.success(f"没有匹配 {args.pattern!r} 的内容。")
 

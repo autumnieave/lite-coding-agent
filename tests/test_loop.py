@@ -343,6 +343,7 @@ async def test_streaming_without_on_text_skips_callback() -> None:
 
     assert result.content == "答案"
 
+
 async def test_newline_closes_intermediate_speech_before_next_turn() -> None:
     """先说一句话再调工具时，补一个换行，避免与下一轮输出黏在同一行。"""
     provider = _ScriptedProvider(
@@ -370,6 +371,7 @@ async def test_no_extra_newline_when_speech_already_ends_with_newline() -> None:
     await AgentLoop(provider, _FakeTools(), on_text=received.append).run("任务")
 
     assert received == ["先去读文件\n", "完成"]
+
 
 # ---------- 多轮会话与消息回传 ----------
 
