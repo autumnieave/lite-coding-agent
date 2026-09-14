@@ -174,3 +174,16 @@
 **Claude Code 原始设计**：5 级流水线——Tool Result budget（含磁盘持久化）→ History Snip → Microcompact（冷热缓存双路径）→ Context Collapse 投影 → Autocompact（约 85.5% 触发，两阶段「分析-摘要」）。
 **参考项目复现**：4 层压缩（Budget 双阈值 50%/70%、Snip >60%、Microcompact 空闲 5 分钟、Auto-compact >85%），另有第 0 / 0.5 层在工具层做执行期截断与落盘，合计 6 层（`claude-code-from-scratch/docs/07-context.md` 第 165 / 204 / 237 / 291 / 317 / 349 行，对照段在第 660 行）。
 **本实现差异**：层数同为 4 层、分层职责一一对应（Tier 1~4 ↔ Budget / Snip / Microcompact / Auto-compact），但四处不同——① 入口线统一为 60%，参考的 Budget 用的是 50%/70% 双阈值；② Tier 3 比参考多一条「利用率 ≥ 60%」的门，避免上下文宽裕时做无谓清理（实测会被 Tier 2 抢先压到线下而跳过）；③ 没有落盘那一层，大结果靠 `read_file` / `bash` 的 2000 行截断兜底；④ Tier 4 加了两条参考没有的护栏——切点不落在 tool 结果上（否则 assistant 与 tool 消息会失去配对，API 直接报错），以及只剩上一次摘要时不再压（否则保留窗口本身超线时会逐轮抖动）。
+## ADR-011：grep 不调用系统 grep，改用纯 Python 遍历
+
+**背景**：Claude Code 的搜索工具走 ripgrep（`rg`）——快、默认遵守 `.gitignore`、支持 `.ignore` 文件，这是它能在大型仓库里同时做到「搜得快」和「搜得干净」的基础。参考项目退了一档：优先调系统 `grep -r`，只在系统没有 grep 时才退回一个很薄的 Python walker（`claude-code-from-scratch/docs/02-tools.md` 第 704 行有独立的 `grep_search` 设计段，第 764 行明说「Claude Code 用 ripgrep，我们用系统 grep——功能够用，少一个依赖」）。它的忽略集合是写死的 `node_modules` 与 `.git`，而且只在 fallback 路径生效——走系统 grep 时不忽略任何东西。Day 2 实现 grep 时面临同样的选择。
+
+**决策**：用纯 Python 遍历（`os.walk` + `re`）自己实现，不调系统 grep；忽略集合集中在 `agent/tools/ignore.py` 的 `IGNORED_DIRS`，由 grep 与 list_dir 共用。
+
+**理由**：
+- **少一个外部依赖**：不必假设目标机器装了什么版本的 grep，也不必维护「系统 grep + Python fallback」两条代码路径——参考项目正是这么分裂的，结果是忽略逻辑只在其中一条路径生效，同一个工具的行为随环境改变。
+- **忽略集合可自定义**：`IGNORED_DIRS` 就是一个 `frozenset`，要加 `.ruff_cache`、`node_modules` 或某个业务目录改一行即可；改成调系统 grep 的话，这些规则得靠 `--exclude-dir` 逐个拼，还要赌对方支持这些参数。
+- **跨平台一致**：Windows 上没有 grep（Git Bash 之外），而 `os.walk` 处处相同。本项目在 Windows 上开发、在 ubuntu 上跑 CI，只有统一走 Python 才能保证两边行为一致。
+- **代价可控**：搜索范围限定在工作区，结果本来就要截断到 100 条，Python 遍历的性能劣势在这个量级上可以接受。
+
+**结果**：grep 的行为完全由本项目决定，不随环境漂移，测试也能直接断言「跳过了哪些目录」。代价是大型仓库上比 ripgrep 慢；若将来需要提速，可以换成 `rg` 并复用同一套 `IGNORED_DIRS`，不必改动上层接口。
