@@ -323,3 +323,43 @@ async def test_chat_stream_wraps_errors_in_llm_error() -> None:
 
     with pytest.raises(LLMError, match="断网"):
         await _provider(client).chat_stream([user_message("hi")], on_text=lambda _: None)
+
+async def test_chat_stream_closes_the_stream() -> None:
+    """流必须显式关闭，否则事件循环退出时会残留 async generator 报错。"""
+
+    class _ClosableStream(_FakeStream):
+        def __init__(self, chunks: list[Any]) -> None:
+            super().__init__(chunks)
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    stream = _ClosableStream([_delta_chunk("答")])
+    client = _FakeClient(response=stream)
+
+    await _provider(client).chat_stream([user_message("hi")], on_text=lambda _: None)
+
+    assert stream.closed is True
+
+
+async def test_chat_stream_closes_the_stream_on_failure() -> None:
+    class _ExplodingStream(_FakeStream):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+        async def _iterate(self) -> Any:
+            yield _delta_chunk("答")
+            raise RuntimeError("流中断")
+
+    stream = _ExplodingStream()
+    client = _FakeClient(response=stream)
+
+    with pytest.raises(LLMError, match="流中断"):
+        await _provider(client).chat_stream([user_message("hi")], on_text=lambda _: None)
+
+    assert stream.closed is True

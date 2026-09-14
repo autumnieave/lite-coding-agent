@@ -92,3 +92,17 @@
 **后果**
 - `core` 与 `tools` 可独立演进、独立测试；已用脚本核对三层导入关系：core 只依赖 core，tools 只依赖 tools，cli 是唯一装配层。
 - Protocol 是隐式契约，`ToolRegistry` 若改了方法签名，静态检查不一定能发现，需要测试兜底。
+
+## ADR-007：流式输出默认开启，并接受 httpcore2 关闭流时的已知噪音
+
+**背景**：Day 2 给 CLI 加上流式输出：模型增量文本逐字写 stdout，工具调用与结果实时写 stderr。实现后发现，多轮流式调用会在进程退出阶段向 stderr 打印一段 traceback：`RuntimeError: generator didn't stop after athrow()`。根因在 `httpcore2/_utils.py` 的 `safe_async_iterate`——它在 `finally` 里 `await iterator.aclose()`，而该 async generator 此时正因 GeneratorExit 被关闭，await 一旦挂起，CPython 就判定「generator didn't stop」。消息由 CPython 的 async generator finalizer 通过 `PyErr_WriteUnraisable` 打出，不属于本项目的调用栈。
+
+**决策**：保留流式输出，不为此加全局兜底。已做两件正确但不足以消除噪音的事：`OpenAICompatProvider.chat_stream` 在 `finally` 中显式关闭 SSE 流；`aclose()` 保证 HTTP 客户端在事件循环仍然存活时关闭。明确不引入 `sys.unraisablehook` 全局屏蔽。
+
+**理由**：
+- 这是依赖方缺陷，不是本项目逻辑错误：exit code、stdout、文件改动全部正确，噪音只出现在退出阶段。
+- 全局 `unraisablehook` 会连真实的未处理异常一起吞掉，为一行噪音牺牲可观测性不划算。
+- 触发条件已定位为「多轮流式」：单轮流式、以及多轮非流式都干净。因此换 provider 或把 `openai` 降级到使用 httpx 的版本都是候选方案，但要先验证再改依赖。
+- 已用最小脚本复现（两次顺序流式调用即可稳定触发），排除偶发。
+
+**结果**：演示多轮任务时结尾会多出一段与被演示功能无关的 traceback，需在演示说明中标注，避免被误判成程序 bug。待办：确认上游是否修复；若影响演示，再评估 `openai<3` 或自定义 transport。

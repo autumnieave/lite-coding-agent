@@ -124,6 +124,11 @@ class AgentLoop:
             if not response.tool_calls:
                 return LoopResult(content=response.content, turns=turn, stopped_reason=COMPLETED)
 
+            # 模型先说了一句话再去调工具：把这一行收尾，
+            # 否则下一轮流式输出的文字会接在同一行上。
+            if self._on_text is not None and last_content and not last_content.endswith("\n"):
+                self._on_text("\n")
+
             for call in response.tool_calls:
                 # 先报「开始」再执行：跑长命令时终端不会一直静默
                 self._emit(f"[第 {turn} 轮] 调用 {call.name}({_preview(call.arguments)})")
