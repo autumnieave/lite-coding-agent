@@ -8,20 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from agent.tools.base import Tool, ToolError, ToolResult, resolve_path
-
-IGNORED_DIRS = frozenset(
-    {
-        ".git",
-        ".venv",
-        "venv",
-        "__pycache__",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".mypy_cache",
-        ".idea",
-        "node_modules",
-    }
-)
+from agent.tools.ignore import IGNORED_DIRS
 
 
 class ListDirArgs(BaseModel):
