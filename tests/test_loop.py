@@ -370,3 +370,50 @@ async def test_no_extra_newline_when_speech_already_ends_with_newline() -> None:
     await AgentLoop(provider, _FakeTools(), on_text=received.append).run("任务")
 
     assert received == ["先去读文件\n", "完成"]
+
+# ---------- 多轮会话与消息回传 ----------
+
+
+async def test_result_carries_the_whole_transcript() -> None:
+    provider = _ScriptedProvider(
+        [LLMResponse(content="", tool_calls=(_call(),)), LLMResponse(content="完成")]
+    )
+    result = await AgentLoop(provider, _FakeTools()).run("任务")
+    roles = [item["role"] for item in result.messages]
+    assert roles == ["system", "user", "assistant", "tool", "assistant"]
+
+
+async def test_carried_history_does_not_duplicate_the_system_prompt() -> None:
+    """第二轮把上一轮的消息接回去时，不能再补一条 system prompt。"""
+    provider = _ScriptedProvider([LLMResponse(content="ok")])
+    first = await AgentLoop(provider, _FakeTools()).run("第一轮")
+
+    provider2 = _ScriptedProvider([LLMResponse(content="ok")])
+    await AgentLoop(provider2, _FakeTools()).run("第二轮", history=first.messages)
+
+    sent = provider2.calls[0]["messages"]
+    assert [item["role"] for item in sent].count("system") == 1
+    assert sent[0]["role"] == "system"
+    assert sent[-1]["content"] == "第二轮"
+
+
+async def test_history_without_system_message_gets_one_prepended() -> None:
+    provider = _ScriptedProvider([LLMResponse(content="ok")])
+    loop = AgentLoop(provider, _FakeTools(), system_prompt="我的系统提示")
+    await loop.run("任务", history=[{"role": "user", "content": "旧消息"}])
+
+    sent = provider.calls[0]["messages"]
+    assert sent[0]["role"] == "system"
+    assert sent[0]["content"] == "我的系统提示"
+    assert sent[1]["content"] == "旧消息"
+
+
+async def test_carried_history_keeps_the_injected_summary() -> None:
+    """注入的摘要也是 system message，多轮接力时不能把它丢掉。"""
+    summary = {"role": "system", "content": "[历史对话摘要]\n要点"}
+    provider = _ScriptedProvider([LLMResponse(content="ok")])
+    await AgentLoop(provider, _FakeTools()).run("任务", history=[summary])
+
+    sent = provider.calls[0]["messages"]
+    assert sent[0]["content"] == "[历史对话摘要]\n要点"
+    assert len([item for item in sent if item["role"] == "system"]) == 1
