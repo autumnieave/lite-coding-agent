@@ -15,6 +15,9 @@ import pytest
 from agent.cli import main as cli
 from agent.core.llm import BaseProvider, LLMResponse, ToolCall
 
+# 真的拉起 echo MCP server 子进程：比纯 mock 用例慢，且对机器负载更敏感。
+pytestmark = pytest.mark.slow
+
 ECHO_SERVER = Path(__file__).resolve().parents[1] / "examples" / "echo_mcp_server.py"
 
 
