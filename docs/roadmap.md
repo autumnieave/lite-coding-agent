@@ -24,7 +24,7 @@
 | `cli/main.py` 接上 chat 命令 | 1h | `lite-agent chat` 能跑 |
 | 调试 + commit | 1h | 3 个 commit，能演示一次工具调用 |
 
-**状态**：✅ 已完成 —— 4 个模块全部实现，89 个单测通过。提交：`552a6a1` LLM Provider、`b0948ff` 工具注册表与文件工具、`c12a2ed` Agent Loop、`cc8fb30` CLI chat。
+**状态**：✅ 已完成 —— 4 个模块全部实现，89 个单测通过。提交（按顺序，`git log --grep` 可查）：`feat: add LLM provider abstraction`、`feat: add tool registry and file tools with pydantic validation`、`feat: add agent loop with tool call handling`、`feat: add chat subcommand to CLI`。
 
 **验收（全部通过）**：
 - [x] 接一家 API，工具调用格式跑通（`OpenAICompatProvider`，OpenAI 兼容协议）
@@ -52,7 +52,7 @@
 | 流式输出 | 2h | 终端逐字输出 |
 | 调试 + commit | 1h | 能演示读→改→跑测试 |
 
-**状态**：✅ 已完成 —— 6 个工具全部可用，流式输出已接。提交：`7d3f213` edit_file、`6ca3e21` bash、`5ed0851` grep、`805a427` 流式输出、`af81400` 流式收尾修复。
+**状态**：✅ 已完成 —— 6 个工具全部可用，流式输出已接。提交（按顺序）：`feat: add edit_file tool with uniqueness validation`、`feat: add bash tool with timeout and danger confirmation`、`feat: add grep tool`、`feat: add streaming output`、`fix: close the SSE stream and separate per-turn output`。
 
 **验收（全部通过）**：
 - [x] 超时、危险命令确认（默认 30s；危险命令需 `confirm_dangerous=true` 或交互确认；超时终止整棵进程树）
@@ -81,7 +81,7 @@
 | Tier 4：全量摘要 | 2h | 摘要 Prompt + 接续逻辑 |
 | 调试 + commit | 1h | 构造长会话，观察压缩触发 |
 
-**状态**：✅ 已完成 —— 四层压缩全部落地，并通过 20 轮真实会话验证。提交：`7b9c9bb` Tier 1、`ac7e25f` Tier 4、`902b2c7` Tier 2+3；数据与复现方式见 `docs/evidence.md`。
+**状态**：✅ 已完成 —— 四层压缩全部落地，并通过 20 轮真实会话验证。提交（按顺序）：`feat: add tier1 budget truncation`、`feat: add tier4 full summarization`、`feat: add tier2 deduplication and tier3 microcompact`；数据与复现方式见 `docs/evidence.md`。
 
 **验收（全部通过）**：
 - [x] `core/context.py` token 预算估算（字符数 / 4；工具调用参数一并计入，否则会低估）
@@ -112,7 +112,7 @@
 | 对比实验设计 | 1.5h | 10 个含约束的长任务用例 |
 | 跑实验 + 统计 | 1h | 约束违反次数 X→Y |
 
-**状态**：✅ 已完成 —— 机制落地并跑完对比实验。提交：`786f165` 约束存储、`4be6385` 压缩前注入 + 压缩后自愈、`b562bcb` CLI 接线、`6f26c83` 实验脚本、`2590192` 压力档、`d54b4c5` 续跑支持、`faade72` 证据与 ADR-012。
+**状态**：✅ 已完成 —— 机制落地并跑完对比实验。提交（按顺序）：`feat: add constraint store with source tracking`、`feat: add constraint injection and self-healing in tier4`、`feat: wire constraint store into the CLI`、`feat: add constraint retention experiment`、`feat: add stress profile to constraint experiment`、`feat: support resuming partial experiment runs`、`docs: add constraint retention evidence and ADR`。
 
 **验收**：
 - [x] `core/constraints.py` 约束存储与加载（结构 `{id, content, source, priority, created_at}`；接口 `load` / `add` / `get_all` / `verify` / `absorb`；空文件、损坏 JSON、重复 id 都是明确定义的行为，34 个单测）
@@ -261,6 +261,7 @@
 ## 每日提交建议
 
 - 每天至少 3 个 commit，使用 Conventional Commits。
+- 文档里引用提交写 **commit 主题**（`git log --grep="..."` 可查），不写哈希——哈希在历史重写后会失效。
 - 示例：
   - `feat: implement agent loop with tool call handling`
   - `feat: add bash and edit_file tools with validation`
