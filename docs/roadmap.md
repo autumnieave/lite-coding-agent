@@ -199,18 +199,33 @@
 
 ---
 
-## Day 7：MCP / 子 Agent（选做）
+## Day 7：MCP 客户端（已完成，子 Agent 未做）
 
-**目标**：加分项，二选一。
+**目标**：加分项，二选一。**最终选 MCP**——它有公开协议可对照（参考项目第 12 章），演示成本也比子 Agent 低；子 Agent 隔离顺延。
 
-| 选项 | 预计耗时 | 验收 |
-|---|---|---|
-| MCP 客户端 | 4-5h | JSON-RPC over stdio，接入一个外部 server |
-| 子 Agent 隔离 | 4-5h | 独立上下文 + 工具白名单 |
+| 任务 | 预计耗时 | 验收 | 状态 |
+|---|---|---|---|
+| 同步 `docs/architecture.md` | 1.5h | 模块名与状态标记和代码一致 | ✅ 8 处 |
+| 最小 echo MCP server | 0.5h | `initialize` / `tools/list` / `tools/call` 全通 | ✅ `examples/echo_mcp_server.py` |
+| MCP 客户端 | 3h | JSON-RPC over stdio，工具发现 + 调用 | ✅ `mcp/client.py` |
+| 接进工具注册表 + CLI | 1.5h | `--mcp-server` 启动 server 并注册工具 | ✅ |
+| MCP 调用前过约束校验（自研） | 1h | 命中禁止类约束时请求不发出去 | ✅ ADR-018 |
+| 子 Agent 隔离 | 4-5h | 独立上下文 + 工具白名单 | 📋 未做，顺延 |
 
-**可演示**：接入一个外部 MCP server，或子 Agent 完成一次隔离任务。
-**卡点**：JSON-RPC 握手不熟 → MCP 参考 `claude-code-from-scratch/docs/12-mcp.md`（对照段在第 575 行），实现对照 `python/mini_claude/mcp_client.py`；子 Agent 隔离参考 `docs/11-multi-agent.md`（对照段在第 634 行），实现对照 `python/mini_claude/subagent.py`。
-**风险应对**：若时间不够，不做，把第 6 天补扎实。**MCP 和子 Agent 是锦上添花，不是简历必需。**
+**验收**：
+
+- [x] `docs/architecture.md` 同步：`constraints.py` / `agents_md.py` / `session.py` 由 📋 改 ✅，模块图加 `mcp/` 子图，数据流图加约束注入分支与 MCP 工具约束校验，模块职责表补 `config.py` 与 `mcp/client.py`
+- [x] 最小 MCP server：`examples/echo_mcp_server.py`，手写 stdio JSON-RPC，零依赖，只暴露一个 `echo` 工具；未知方法 / 未知工具分别返回 -32601 / -32602
+- [x] MCP 客户端：`initialize` → `tools/list` → `tools/call` 三步流程，工具按 `mcp__<server>__<tool>` 注册；与参考项目的四处工程差异（请求登记时序、进程树终止、stderr 处理、超时收尾）见 ADR-017
+- [x] CLI 接线：`--mcp-server "[NAME=]COMMAND"` 可重复；单个 server 连不上只警告并跳过。实跑 `lite-agent chat "用 echo 工具说 hello" --mcp-server "python examples/echo_mcp_server.py"` 打出 `MCP server「echo_mcp_server」已连接，发现 1 个工具`，工具调用成功
+- [x] 执行层约束校验：`AGENTS.md` 写一条禁止调用 echo 工具的约束后，实跑中模型**仍然发起了** `mcp__echo__echo` 调用，被本地校验拦下（`请求没有发给 MCP server`），失败原因回填给模型
+- [x] 全量 **488** 个单测通过（Day 6 收尾时 451），`ruff check` 与 `ruff format --check` 干净
+
+**可演示**：`lite-agent chat "用 echo 工具说 hello" --mcp-server "python examples/echo_mcp_server.py" --verbose`；以及同一条命令在 `AGENTS.md` 有禁止性约束时的拦截效果。
+
+**卡点**：JSON-RPC 握手 → 已解决。参考 `claude-code-from-scratch/docs/12-mcp.md`（对照段在第 575 行），实现对照 `python/mini_claude/mcp_client.py`。子 Agent 隔离参考 `docs/11-multi-agent.md`（对照段在第 634 行），实现对照 `python/mini_claude/subagent.py`，未开工。
+
+**风险应对**：子 Agent 原样顺延——MCP 已完整可演示，「核心链路完整」这个结论不受影响。
 
 ---
 
@@ -237,7 +252,7 @@
 - [x] **M4**：约束保留机制有对比数据（Day 4 结束，357 个单测通过；压力档约束原文逐字保留 100% vs 93.0%，实验组 6/10 次遇到摘要整段丢 40 条、累计补录 280 条，见 `docs/evidence.md` 用例五）
 - [x] **M5**：简历级完成，GitHub 完整（Day 5 结束，417 个单测通过；四层压缩两处技术债已修，`memory/agents_md.py` 与 `memory/session.py` 落地但尚未接入主流程，见 `docs/evidence.md` 用例六）
 - [x] **M6**：前 5 天验收全打勾，评测规模扩大（Day 6 结束，451 个单测通过；**原计划的「20 用例」实际做成了「同档位 20+20 次复跑」**——提高的是样本量不是用例多样性，行为探针仍只有 3 项，这条欠债顺延 Day 7，见 Day 6 卡点）
-- [ ] **M7**：MCP 或子 Agent 完成（Day 7 结束，选做）
+- [x] **M7**：MCP 完成（Day 7 结束，488 个单测通过；MCP 客户端 + echo server + 执行层约束校验全部落地，**子 Agent 未做、继续顺延**）
 
 ---
 
