@@ -19,6 +19,7 @@ from agent.core.compaction import (
 )
 from agent.core.constraints import ConstraintStore
 from agent.core.llm import user_message
+from agent.memory.agents_md import register_constraints
 
 WINDOW = 10_000
 KEEP_RECENT = 10
@@ -268,3 +269,28 @@ async def test_absorb_keeps_the_first_declaration_on_conflict() -> None:
     ]
     await compactor.compact(messages)
     assert store.get("R3MJUD").content == "输出必须是合法 JSON"  # type: ignore[union-attr]
+
+
+# ---------- AGENTS.md 来源的最后一公里 ----------
+
+
+@pytest.mark.asyncio
+async def test_agents_md_constraints_reach_the_tier4_summary_prompt(tmp_path: Path) -> None:
+    """AGENTS.md → 约束存储 → 摘要请求的清单，全程不联网。
+
+    这条路径只在 **Tier 4 触发时**把约束送进模型上下文：短任务不压缩，
+    模型根本看不到 AGENTS.md 里的约束（见 ADR-012 与 docs/evidence.md）。
+    """
+    (tmp_path / "AGENTS.md").write_text(
+        "# 规则\n\n## 关键约束\n\n- **C1**：必须兼容 Python 3.11。\n",
+        encoding="utf-8",
+    )
+    store = ConstraintStore()
+    register_constraints(store, tmp_path)
+
+    recorder = _Recorder()
+    compactor = Compactor(_config(), summarize=recorder, constraints=store)
+    await compactor.compact(_filler(20, size=4000))
+
+    instruction = recorder.requests[0][-1]["content"]
+    assert "- [C1] 必须兼容 Python 3.11。" in instruction

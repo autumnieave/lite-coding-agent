@@ -22,6 +22,7 @@ import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 from agent.core.constraints import SOURCE_AGENTS_MD, Constraint, ConstraintStore
 
@@ -123,33 +124,61 @@ def load_constraints(start: Path | str, *, stop: Path | str | None = None) -> li
     return list(_sort(resolved.values()))
 
 
+class Registration(NamedTuple):
+    """`register_constraints()` 的结果：新建了哪些、按文件刷新了哪些。"""
+
+    added: tuple[Constraint, ...] = ()
+    updated: tuple[Constraint, ...] = ()
+
+    @property
+    def empty(self) -> bool:
+        return not self.added and not self.updated
+
+
 def register_constraints(
     store: ConstraintStore,
     start: Path | str,
     *,
     stop: Path | str | None = None,
-) -> list[Constraint]:
-    """把收集到的约束写进存储，返回本次新增的条目。
+) -> Registration:
+    """把收集到的约束写进存储，返回新建与刷新的条目。
 
-    与 `ConstraintStore.absorb()` 一样对自由文本保持宽容：同一个 ID 已经被别处
-    （比如用户在对话里声明）占用且内容不同时跳过，而不是抛错打断整轮对话。
+    **`AGENTS.md` 对它自己的 ID 是唯一真源**：库里已有同 ID 的 `source=agents_md` 条目、
+    而文件正文变了时，按文件改写。否则「编辑 AGENTS.md 让约束生效」做不到——
+    库里那份旧正文会把新正文永远挡在外面。`created_at` 保留首次入库时间。
+
+    反过来，同 ID 已被**别的来源**（用户在对话里声明、agent 自行识别）占用时跳过，
+    与 `ConstraintStore.absorb()` 一样对自由文本保持宽容，不抛错打断整轮对话。
     """
     added: list[Constraint] = []
+    updated: list[Constraint] = []
     for item in load_constraints(start, stop=stop):
-        if store.get(item.id) is not None:
-            continue
-        try:
-            added.append(
-                store.add(
-                    item.content,
-                    source=SOURCE_AGENTS_MD,
-                    priority=item.priority,
-                    constraint_id=item.id,
+        existing = store.get(item.id)
+        if existing is None:
+            try:
+                added.append(
+                    store.add(
+                        item.content,
+                        source=SOURCE_AGENTS_MD,
+                        priority=item.priority,
+                        constraint_id=item.id,
+                    )
+                )
+            except ValueError:
+                continue
+        elif existing.source == SOURCE_AGENTS_MD and existing.content != item.content:
+            updated.append(
+                store.set(
+                    Constraint(
+                        id=item.id,
+                        content=item.content,
+                        source=SOURCE_AGENTS_MD,
+                        priority=item.priority,
+                        created_at=existing.created_at,
+                    )
                 )
             )
-        except ValueError:
-            continue
-    return added
+    return Registration(added=tuple(added), updated=tuple(updated))
 
 
 def read_all(start: Path | str, *, stop: Path | str | None = None) -> str:

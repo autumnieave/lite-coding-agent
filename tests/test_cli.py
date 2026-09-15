@@ -436,3 +436,70 @@ def test_state_dir_stays_clean_when_nothing_is_declared(
 
     assert cli.main(["chat", "普通问题", "--root", str(workspace)]) == cli.EXIT_OK
     assert not (workspace / cli.CONSTRAINTS_DIR).exists()
+
+
+# ---------- AGENTS.md 接线 ----------
+
+
+def _write_agents_md(root: Path, *constraints: str) -> None:
+    body = "# 项目规则\n\n## 关键约束\n\n" + "\n".join(constraints) + "\n"
+    (root / "AGENTS.md").write_text(body, encoding="utf-8")
+
+
+def _saved_constraints(workspace: Path) -> dict[str, dict[str, Any]]:
+    payload = json.loads(_state_file(workspace).read_text(encoding="utf-8"))
+    return {item["id"]: item for item in payload["constraints"]}
+
+
+def test_agents_md_constraints_are_registered_on_start(
+    monkeypatch: pytest.MonkeyPatch, workspace: Path
+) -> None:
+    """任务启动时按目录层级读 AGENTS.md，C1/C2 进约束存储并标 agents_md。"""
+    _write_agents_md(workspace, "- **C1**：必须兼容 Python 3.11。", "- **C2**：只允许标准库。")
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="好")]))
+
+    assert cli.main(["chat", "普通问题", "--root", str(workspace)]) == cli.EXIT_OK
+
+    saved = _saved_constraints(workspace)
+    assert sorted(saved) == ["C1", "C2"]
+    assert saved["C1"]["content"] == "必须兼容 Python 3.11。"
+    assert all(item["source"] == "agents_md" for item in saved.values())
+
+
+def test_agents_md_edit_takes_effect_on_the_next_run(
+    monkeypatch: pytest.MonkeyPatch, workspace: Path
+) -> None:
+    """改了 AGENTS.md 的 C1，下一次运行必须用新正文——文件是唯一真源。"""
+    _write_agents_md(workspace, "- **C1**：改写前的正文。")
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="好")]))
+    assert cli.main(["chat", "第一次", "--root", str(workspace)]) == cli.EXIT_OK
+    assert _saved_constraints(workspace)["C1"]["content"] == "改写前的正文。"
+
+    _write_agents_md(workspace, "- **C1**：改写后的正文。")
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="好")]))
+    assert cli.main(["chat", "第二次", "--root", str(workspace)]) == cli.EXIT_OK
+
+    assert _saved_constraints(workspace)["C1"]["content"] == "改写后的正文。"
+
+
+def test_verbose_reports_agents_md_registration(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], workspace: Path
+) -> None:
+    _write_agents_md(workspace, "- **C1**：必须兼容 Python 3.11。")
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="好")]))
+
+    code = cli.main(["chat", "问题", "--root", str(workspace), "--verbose"])
+
+    assert code == cli.EXIT_OK
+    assert "AGENTS.md 约束：新增 1 条" in capsys.readouterr().err
+
+
+def test_workspace_without_agents_md_registers_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], workspace: Path
+) -> None:
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="好")]))
+
+    code = cli.main(["chat", "问题", "--root", str(workspace), "--verbose"])
+
+    assert code == cli.EXIT_OK
+    assert "AGENTS.md 约束" not in capsys.readouterr().err

@@ -20,6 +20,7 @@ from agent.core.config import find_env_file, load_env_file
 from agent.core.constraints import DEFAULT_FILENAME, ConstraintStore
 from agent.core.llm import BaseProvider, LLMConfigError, LLMError, OpenAICompatProvider
 from agent.core.loop import DEFAULT_MAX_TURNS, AgentLoop, LoopResult
+from agent.memory import agents_md
 from agent.tools import DangerApprover, build_default_registry
 
 __version__ = "0.1.0"
@@ -192,6 +193,20 @@ def run_chat(args: argparse.Namespace) -> int:
     store.load()
     if args.verbose and len(store):
         print(f"[verbose] 已加载 {len(store)} 条约束", file=sys.stderr)
+
+    # 项目规则加载：从工作区根目录向上收集 AGENTS.md，只取「关键约束」一节进存储。
+    # 注意这**不是** Claude Code 意义上的「记忆系统」（那套是 agent 自己写事实、按需语义召回），
+    # 只是把「人写的规则文件」读成约束，见 ADR-014。放在 cli 装配层而不是 core/loop.py，
+    # 是为了守住依赖方向：memory 依赖 core，core 不反向依赖 memory（AGENTS.md 的 C4）。
+    registration = agents_md.register_constraints(store, root)
+    if not registration.empty:
+        store.save()
+    if args.verbose and not registration.empty:
+        print(
+            f"[verbose] AGENTS.md 约束：新增 {len(registration.added)} 条，"
+            f"按文件刷新 {len(registration.updated)} 条",
+            file=sys.stderr,
+        )
     compactor = Compactor(summarize=_summarizer(provider), constraints=store, on_event=reporter)
     loop = AgentLoop(
         provider,

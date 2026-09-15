@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.core.constraints import SOURCE_AGENTS_MD, ConstraintStore
+from agent.core.constraints import SOURCE_AGENTS_MD, Constraint, ConstraintStore
 from agent.memory.agents_md import (
     DEFAULT_FILENAME,
     MAX_DEPTH,
+    Registration,
     find_files,
     load_constraints,
     parse_constraints,
@@ -194,8 +195,10 @@ def test_read_all_ignores_blank_files(tmp_path: Path) -> None:
 def test_register_constraints_writes_into_the_store(tmp_path: Path) -> None:
     _write(tmp_path, _section(["- **C1**：必须兼容 Python 3.11。", "- **C2**：只允许标准库。"]))
     store = ConstraintStore()
-    added = register_constraints(store, tmp_path)
-    assert [item.id for item in added] == ["C1", "C2"]
+    registration = register_constraints(store, tmp_path)
+    assert [item.id for item in registration.added] == ["C1", "C2"]
+    assert registration.updated == ()
+    assert not registration.empty
     assert [item.id for item in store.get_all()] == ["C1", "C2"]
     assert all(item.source == SOURCE_AGENTS_MD for item in store)
 
@@ -204,7 +207,8 @@ def test_register_constraints_is_idempotent(tmp_path: Path) -> None:
     _write(tmp_path, _section(["- **C1**：必须兼容 Python 3.11。"]))
     store = ConstraintStore()
     register_constraints(store, tmp_path)
-    assert register_constraints(store, tmp_path) == []
+    again = register_constraints(store, tmp_path)
+    assert again.empty
     assert len(store) == 1
 
 
@@ -213,5 +217,43 @@ def test_register_constraints_skips_ids_taken_by_other_sources(tmp_path: Path) -
     _write(tmp_path, _section(["- **C1**：AGENTS.md 的版本。"]))
     store = ConstraintStore()
     store.add("用户自己声明的版本。", constraint_id="C1")
-    assert register_constraints(store, tmp_path) == []
+    assert register_constraints(store, tmp_path).empty
     assert store.get("C1").content == "用户自己声明的版本。"  # type: ignore[union-attr]
+
+
+def test_register_constraints_refreshes_when_the_file_changes(tmp_path: Path) -> None:
+    """AGENTS.md 对它自己的 ID 是唯一真源：改了文件，库里的旧正文必须让位。"""
+    _write(tmp_path, _section(["- **C1**：改写前的正文。"]))
+    store = ConstraintStore()
+    register_constraints(store, tmp_path)
+    created_at = store.get("C1").created_at  # type: ignore[union-attr]
+
+    _write(tmp_path, _section(["- **C1**：改写后的正文。"]))
+    registration = register_constraints(store, tmp_path)
+
+    assert registration.added == ()
+    assert [item.id for item in registration.updated] == ["C1"]
+    item = store.get("C1")
+    assert item is not None
+    assert item.content == "改写后的正文。"
+    assert item.created_at == created_at  # 首次入库时间保留，不被刷新覆盖
+    assert item.source == SOURCE_AGENTS_MD
+
+
+def test_register_constraints_keeps_untouched_ids_when_one_changes(tmp_path: Path) -> None:
+    _write(tmp_path, _section(["- **C1**：一。", "- **C2**：二。"]))
+    store = ConstraintStore()
+    register_constraints(store, tmp_path)
+
+    _write(tmp_path, _section(["- **C1**：一。", "- **C2**：二（改）。"]))
+    registration = register_constraints(store, tmp_path)
+
+    assert [item.id for item in registration.updated] == ["C2"]
+    assert len(store) == 2
+
+
+def test_registration_empty_flag() -> None:
+    item = Constraint(id="C1", content="一。", source=SOURCE_AGENTS_MD)
+    assert Registration().empty
+    assert not Registration(added=(item,)).empty
+    assert not Registration(updated=(item,)).empty
