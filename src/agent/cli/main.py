@@ -372,7 +372,7 @@ def run_chat(args: argparse.Namespace) -> int:
         constraints=store,
     )
 
-    mcp = McpClient(on_event=reporter) if mcp_servers else None
+    mcp = McpClient(on_event=reporter, constraints=store) if mcp_servers else None
 
     try:
         result = asyncio.run(

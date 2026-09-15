@@ -43,6 +43,9 @@ CONSTRAINT_MARKER = "[CONSTRAINT]"
 
 DEFAULT_FILENAME = "constraints.json"
 
+PROHIBITION_KEYWORDS = ("禁止", "不得", "不允许", "禁用", "严禁")
+"""约束正文里出现这些词、且点名了某个工具时，视为禁止调用该工具（ADR-018）。"""
+
 SYSTEM_PROMPT_HEADING = (
     "# 必须遵守的约束\n"
     "以下条目来自项目规则（AGENTS.md）与用户显式声明，任何时候都不得违反；"
@@ -265,6 +268,23 @@ class ConstraintStore:
         for item in self.get_all():
             (present if item.id in text else missing).append(item)
         return Verification(present=tuple(present), missing=tuple(missing))
+
+    def blocking_for(self, *tool_names: str) -> Constraint | None:
+        """找出禁止调用指定工具的约束；没有就返回 None。
+
+        这是**文本启发式**：约束正文同时命中「禁止类关键词」和「工具名」才算数。
+        它能挡住「禁止调用 echo 工具」这种明确声明，但读不懂更复杂的策略——
+        本项目的约束本来就是写给人看的规则，这里不做完整策略引擎（ADR-018）。
+        """
+        candidates = [name for name in tool_names if name]
+        if not candidates:
+            return None
+        for item in self.get_all():  # 已按优先级排序，命中第一条即可
+            if not any(keyword in item.content for keyword in PROHIBITION_KEYWORDS):
+                continue
+            if any(name in item.content for name in candidates):
+                return item
+        return None
 
     def render(self) -> str:
         """渲染成注入用的清单文本。没有约束时返回空串。"""
