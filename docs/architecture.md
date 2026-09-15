@@ -28,7 +28,7 @@ flowchart TB
         S["session.py ✅<br/>消息历史 / checkpoint"]
     end
     subgraph MCP["mcp"]
-        MC["client.py 🚧<br/>JSON-RPC over stdio"]
+        MC["client.py ✅<br/>JSON-RPC over stdio"]
     end
     M --> L
     M --> MC
@@ -44,7 +44,7 @@ flowchart TB
     CP --> S
 ```
 
-> 除 `mcp/client.py`（Day 7 开发中）外，图中模块均已落地，文件名以实际代码为准。
+> 图中模块均已落地，文件名以实际代码为准。
 > 依赖方向：`cli` 是装配层，依赖 `core` / `tools` / `memory` / `mcp`；`tools` 不导入 `core`，
 > `core` **不反向依赖**任何一层——工具执行器以 `ToolExecutor` Protocol 注入（ADR-006）。
 

@@ -2,7 +2,7 @@
 
 > 从零实现的终端 Coding Agent，不依赖 LangChain 等 Agent 框架。核心目标：在长任务中**不丢失关键约束**。
 
-**当前状态**：Agent Loop + 6 个工具 + 流式输出 + 四层上下文压缩 + 关键约束保留（压缩通道 + system prompt 通道）+ 记忆系统（AGENTS.md 目录层级加载）+ 端到端会话 checkpoint 均已完成；交互式 REPL、MCP 客户端、子 Agent 隔离见「路线图」。各功能实现进度见「核心特性」与「路线图」。
+**当前状态**：Agent Loop + 6 个内置工具 + 流式输出 + 四层上下文压缩 + 关键约束保留（压缩通道 + system prompt 通道 + MCP 执行层校验）+ 记忆系统（AGENTS.md 目录层级加载）+ 端到端会话 checkpoint + MCP 客户端（stdio）均已完成；交互式 REPL 与子 Agent 隔离见「路线图」。各功能实现进度见「核心特性」与「路线图」。
 
 ## 为什么做
 
@@ -24,11 +24,11 @@
 - ✅ **关键约束保留（独有）**：约束独立存于 `constraints.json`，两条并行注入通道——每轮把清单追加进 system prompt（短任务不压缩也生效），压缩时摘要 Prompt 再逐条保留一次；压缩后按 id 校验并补录漏掉的原文。压力档 20+20 次实测：开启「上下文里仍在」800/800、关闭 640/800；逐字保留 95.0% vs 69.0%
 - ✅ **项目记忆**：按目录层级向上加载 `AGENTS.md`，C1–C5 解析为 `source=agents_md` 的约束，改文件后下一轮刷新
 - ✅ **会话持久化**：`session.jsonl` 逐轮追加，kill 后新进程能恢复消息历史 / token 计数 / 约束状态
+- ✅ **MCP 客户端（stdio）**：手写 JSON-RPC over stdio，`initialize` / `tools/list` / `tools/call` 全流程；发现的工具按 `mcp__<server>__<tool>` 注册进工具表。MCP 调用前额外过一道约束校验（独有，见 ADR-018）
 
 **计划中：**
 
 - 📋 **交互式 REPL**：多轮对话（当前 `chat` 为单次执行）
-- 📋 **MCP 客户端**：手写 JSON-RPC over stdio，接入外部工具
 - 📋 **子 Agent 隔离**：独立上下文和工具白名单
 
 ## 架构图
@@ -85,10 +85,11 @@ export LLM_MODEL="deepseek-chat"
 lite-agent --help                            # 查看用法与参数
 lite-agent chat "列出当前目录"                # 执行一次任务
 lite-agent chat "列出当前目录" --verbose      # 同上，打印每次工具调用的完整参数与结果
+lite-agent chat "用 echo 工具说 hello" --mcp-server "python examples/echo_mcp_server.py"   # 接一个 MCP server
 ```
 
 > 输出分流：**stdout 只放模型的最终答案**，工具进度默认就实时上报到 **stderr**（`· ` 前缀；`--verbose` 换成 `[verbose] ` 并带完整参数与结果）。因此 `lite-agent chat "..." > answer.txt` 拿到的始终是干净答案。
-> 当前进度：Agent Loop + 6 个工具 + 流式输出 + 四层上下文压缩 + 关键约束保留 + 记忆系统（AGENTS.md 目录层级加载）与端到端会话 checkpoint 已完成；交互式 REPL 见「路线图」。
+> 当前进度：Agent Loop + 6 个内置工具 + 流式输出 + 四层上下文压缩 + 关键约束保留 + 记忆系统（AGENTS.md 目录层级加载）+ 端到端会话 checkpoint + MCP 客户端已完成；交互式 REPL 与子 Agent 隔离见「路线图」。
 > 退出码：0 成功 / 1 任务失败（含达到轮数上限）/ 2 配置或用参错误。
 
 ## 项目结构
@@ -99,6 +100,7 @@ lite-coding-agent/
 │   ├── core/          # Agent Loop、LLM 抽象、上下文管理
 │   ├── tools/         # 工具注册表与具体工具
 │   ├── memory/        # 项目记忆与会话持久化
+│   ├── mcp/           # MCP 客户端（stdio + JSON-RPC）
 │   └── cli/           # 命令行入口
 ├── tests/             # 单元测试
 ├── docs/              # 架构与决策文档
@@ -148,7 +150,7 @@ lite-coding-agent/
 - [x] 约束注入 system prompt（短任务不触发压缩也生效）
 - [x] 项目记忆 + checkpoint
 - [x] 单元测试 + GitHub Actions
-- [ ] MCP 客户端
+- [x] MCP 客户端（stdio + JSON-RPC，含执行层约束校验）
 - [ ] 子 Agent 隔离
 
 ## 评测
@@ -181,7 +183,9 @@ lite-coding-agent/
 |---|---|---|
 | Agent Loop / 工具系统 / 流式输出 / 上下文压缩 / 会话 checkpoint | **有**——对照的是设计取舍，代码全部自写，差异逐条记在 ADR 里 | ADR-006 ~ ADR-011、ADR-013、ADR-015 |
 | 项目记忆读 `AGENTS.md` | **部分**——Claude Code 里对应的是 CLAUDE.md 机制，**不是**它那套跨会话 memory 系统（四分类 + 语义召回） | ADR-014 |
+| MCP 客户端 | **有**——SDK 封装 / stdio + SSE / 三段式命名 / 15s 超时 | ADR-017 |
 | **关键约束保留** | **无，纯自研**——Claude Code 与参考项目都没有「约束独立存储 + 压缩前注入 + 压缩后校验自愈」 | ADR-004、ADR-012、ADR-016 |
+| **MCP 工具的执行层约束校验** | **无，纯自研**——拦截依据是本项目自己的约束清单 | ADR-018 |
 
 > 所以本项目**不是**「参考 Claude Code 做的复刻」：核心差异化机制（约束保留）是原创，其余模块是照着公开设计重写并记下差异。
 
