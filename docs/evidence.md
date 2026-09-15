@@ -292,4 +292,4 @@ $ lite-agent chat "用 echo 工具说 hello" --mcp-server "python examples/echo_
 - **行为探针覆盖面**：15 / 40 条约束里只有 3 条有输出层检查（JSON / snake_case / 无围栏），其余只统计是否还在上下文里。两次复跑合起来 on / off 的违反次数是 5 vs 19，差异主要来自对照组「整段丢 40 条」，不是逐条渐进差异；要证明「记得就会遵守」，得把更多约束做成可判定规则。
 - **MCP 的覆盖边界**：只支持 stdio（没有 SSE / OAuth），工具列表一次性发现、不感知 server 运行时变更，也没有连接重试，一个 server 一个子进程（ADR-017 的「已知边界」）。
 - **执行层约束校验只看工具名、不看参数**：约束「禁止把 API Key 写进文件」拦不住「用 echo 工具把 Key 回显出来」。要让校验看得懂参数，得先有可判定的参数规则——和上面那条「行为探针覆盖面」是同一笔欠债（ADR-018）。
-- **子 Agent 隔离未做**：Day 7 的二选一里被顺延。参考实现是 `claude-code-from-scratch/python/mini_claude/subagent.py`（对照段见 `docs/11-multi-agent.md` 第 634 行）。
+- **子 Agent 隔离未做**：Day 7 评估后判定不做（能力与「智能问数」重复），不是时间不够。若之后要做，参考实现是 `claude-code-from-scratch/python/mini_claude/subagent.py`（对照段见 `docs/11-multi-agent.md` 第 634 行）。
