@@ -3,6 +3,22 @@
 记录项目中的关键技术决策，每条包含**背景 / 决策 / 理由**三部分，供面试追问时直接引用。
 不记录尚未拍板的事项；未定项在架构文档中标 📋。
 
+## 哪些模块有 Claude Code 对照，哪些是纯自研
+
+先看这张表再看单条 ADR。**不要笼统说「参考了 Claude Code」**——只有下表标「有」的模块才做过对照，且对照的是设计取舍，代码全部自己写，差异逐条记在对应 ADR 里。
+
+| 模块 | Claude Code 对照 | 参考项目来源 | ADR |
+|---|---|---|---|
+| Agent Loop | 有（7 种继续原因、错误回填、最大轮数） | `docs/01-agent-loop.md` | ADR-006 |
+| 工具系统（read/write/list/edit/bash/grep） | 有（唯一性校验、read-before-edit、mtime、进程树、搜索引擎） | `docs/02-tools.md` | ADR-008 / ADR-009 / ADR-011 |
+| 流式输出 | 有（双后端、流式工具执行、重试、thinking） | `docs/05-streaming.md` | ADR-007 / ADR-013 |
+| 上下文压缩 | 有（5 级流水线 → 4 层，阈值与估算） | `docs/07-context.md` | ADR-010 |
+| 项目记忆（读 AGENTS.md） | **部分**：Claude Code 里对应 CLAUDE.md 机制，不是它的 memory 系统 | `docs/07-context.md` / `docs/08-memory.md` | ADR-014 |
+| 会话 checkpoint | 有（JSONL 追加写、崩溃安全） | `docs/04-cli-session.md` | ADR-015 |
+| **关键约束保留** | **无：纯自研**，Claude Code 与参考项目都没有 | — | ADR-004 / ADR-012 |
+
+无对照的部分还有：项目脚手架、打包、`ruff` / CI / pre-commit 之类的工程约定——常规工程实践，没有对照对象。
+
 ## ADR-001：不依赖 LangChain，自研 Agent Loop
 
 **背景**：LangChain、LlamaIndex 等框架提供现成的 AgentExecutor，能快速跑通 demo，但把主循环、上下文管理、错误恢复都封装在内部。
@@ -188,7 +204,7 @@
 
 **结果**：grep 的行为完全由本项目决定，不随环境漂移，测试也能直接断言「跳过了哪些目录」。代价是大型仓库上比 ripgrep 慢；若将来需要提速，可以换成 `rg` 并复用同一套 `IGNORED_DIRS`，不必改动上层接口。
 
-## ADR-012：约束保留机制（压缩前注入 + 压缩后校验 + 自愈）
+## ADR-012：约束保留机制（压缩前注入 + 压缩后校验 + 自愈）【纯自研】
 
 **背景**：ADR-004 定了「约束独立存储、可校验」，但没有说注入与校验具体怎么做。Day 4 落地时撞到两个具体问题：① 摘要 Prompt 第 4 项只写「关键约束（如有）……逐条原样保留」，没告诉模型具体是哪几条，模型完全可以写一句「已保留相关约束」交差，校验也无从下手；② 模型会把整段约束丢掉——实测标准档 10 次里 1 次，压力档 10 次里 6 次（40 条约束、25 轮会话），只靠 Prompt 是概率性保证（见 `docs/evidence.md` 用例五）。
 
@@ -205,7 +221,10 @@
 - 吸收只认用户消息：助手消息里的同款文本多半是复述或举例，算成约束会误伤。同一 id 重复出现时「先到先得」而不是报错——扫的是自由文本，重申同一条约束是常态，为此抛异常会打断整轮对话；`add()` 仍保持严格，那是显式写入。
 - 不接存储时行为不变，对照组才能干净地只改一个变量。
 
-**三层对照**
+**三层对照——本模块为纯自研，两侧都没有直接对照**
+
+要强调的是：**这套机制是纯自研，Claude Code 和参考项目都没有**「约束独立存储 + 压缩前逐条注入 + 压缩后按 id 校验 + 自愈补录」。下面两行写的是两边**相邻的**设计，用途是标出我们补的是哪块空白，不是本实现的来源。
+
 **Claude Code 原始设计**：Autocompact 是 5 级流水线的最后手段，fork 子 Agent 调 API 生成摘要，提示词走「分析-摘要」两阶段，产出 9 段标准化 `<summary>`，最后剥离推理只留摘要（`claude-code-from-scratch/docs/07-context.md` 第 688 行）。约束没有独立的存储与校验环节，靠「分节模板不丢内容」保证。
 **参考项目复现**：摘要提示词只有一句 `Summarize the conversation so far...`，system 侧加一句 `Be concise but preserve important details.`（`docs/07-context.md` 第 480 / 515 行）。没有约束概念，也没有压缩前后的校验。
 **本实现差异**：在四层压缩之外单独开了一条「约束通道」——独立存储（ADR-004）+ 压缩前吸收 + 摘要时逐条注入 + 摘要后按 id 校验并补录。相对参考项目，是把「摘要要保留重要细节」这句祈使句换成可枚举、可校验、可自愈的机制；相对 Claude Code，是把「靠分节模板不丢」换成「不依赖模型自觉」。
@@ -213,3 +232,69 @@
 **结果**：见 `docs/evidence.md` 用例五。标准档（15 条 / 10+10）两组打平；压力档（40 条 / 10+10）出现差异——逐字保留实验组 400/400、对照组 372/400（93.0%），对照组 10 次里有 5 次丢掉 1~7 条约束**原文**而代号仍在，实验组 10 次里有 6 次遇到摘要**整段丢掉全部 40 条**、累计补录 280 条。行为探针（JSON / snake_case / 无代码围栏）两组仍打平，因为 3 项检查只覆盖 40 条约束中的 3 条。**机制买到的是「约束原文不会丢」这条保证，不是行为指标的提升。**
 
 代价是每次摘要请求多一段清单（15~40 行），以及多一份要维护的 `constraints.json`。另外要注意：逐字保留率的两组差距（100% vs 93.0%）来自「补录」，而补录只在摘要真丢东西时才发生——也就是说这个数字衡量的是「模型有多不稳」，不是「机制有多好」；机制的确定性在于，它把这份不稳从结果里消除了。
+
+## ADR-013：流式输出只做「增量打印」，不做流式工具执行
+
+**背景**：Day 2 给 CLI 加流式输出（ADR-007 记的是它带来的 httpcore2 噪音）。参考项目 `docs/05-streaming.md` 有完整的双后端流式实现，需要明确我们抄到哪、停在哪。
+
+**决策**：
+- 接口层只放一个回调：`BaseProvider.chat_stream(messages, tools, on_text)`。
+- `BaseProvider.chat_stream` 给默认实现——退化为非流式 `chat()`，拿到完整结果后一次性回调。只实现 `chat` 的 Provider（含测试替身）因此也能被上层按流式接口统一调用。
+- `OpenAICompatProvider.chat_stream` 是唯一的真实流式实现，在 `finally` 里显式关 SSE 流。
+- 分工固定：模型增量文本写 stdout，工具进度写 stderr。
+
+**理由**：
+- 用回调而不是 async generator：`AgentLoop` 要在同一次调用里同时拿「增量文本」和「最终 `LLMResponse`（含 tool_calls）」，生成器方案要求调用方自己拼装最终响应，回调里直接返回完整响应更简单。
+- 默认实现退化为非流式，是为了让测试替身不必实现流式——本项目所有单测都 mock 掉 LLM（AGENTS.md C2），替身再写一套流式纯属负担。
+- 只接一家后端：ADR-001 的立场是不为演示价值引入额外依赖，多一家后端就多一套 chunk 格式转换要维护。
+
+**三层对照**
+**Claude Code 原始设计**：只有 Anthropic 一家后端，底层 SSE。关键优化是 `StreamingToolExecutor`——模型还在生成后续内容时，已解析完成的 `tool_use` block 立刻开始执行，在典型 5~30 秒的流窗口里文件读取几乎能全部覆盖进去；重试按错误类型区分（429/503/529 与网络瞬断才重试，400/401/404 重试无意义），用指数退避 + 随机抖动打破重试风暴；Extended Thinking 独立展示与折叠（`claude-code-from-scratch/docs/05-streaming.md` 第 686-716 行）。
+**参考项目复现**：做到「逐字打印 + 双后端」。Anthropic 走 SDK 内置 stream（`agent.py:1633` 的 `_call_anthropic_stream`），OpenAI 兼容手动累积 chunk（`agent.py:1865` 的 `_call_openai_stream`）；流式工具执行用「回调 + earlyExecutions Map」的精简实现，OpenAI 侧靠批量 `Promise.all` 并行；重试是「指数退避 + 随机抖动」；thinking blocks 只过滤、不入历史。对比表在 `docs/05-streaming.md` 第 708-716 行。
+**本实现差异**：① **没有做流式工具执行**——工具在整轮响应结束后才执行，所以拿不到「流还没结束、工具就跑完」那部分收益；② 没有重试，一次失败就把 `LLMError` 回填给模型自己改；③ 没有 thinking 处理；④ 后端只有 OpenAI 兼容一家。保下来的是「回调式增量」这个形状，加上把增量文本与工具进度分流到 stdout / stderr 的分工（参考项目统一交给 UI 层）。
+
+**结果**：`lite-agent chat "..." > answer.txt` 拿到的始终是干净答案，工具进度不会混进去。已知噪音见 ADR-007。
+
+## ADR-014：项目记忆读 AGENTS.md，不做跨会话记忆库
+
+**背景**：Day 5 要落地 `memory/`。但「记忆」在两个地方指的不是一回事，得先说清楚：Claude Code 的 **memory 系统**（agent 自己往库里写事实、按需语义召回）和 **CLAUDE.md 机制**（人写的项目规则、每次会话完整加载）是两套东西。参考项目 `docs/08-memory.md` 复现的是前者。
+
+**决策**：只做后者。`memory/agents_md.py` 干两件事：
+- `find_files(start, stop=)`：从 cwd 向上逐层找 `AGENTS.md`，深度上限 `MAX_DEPTH = 5`；返回顺序由远到近，近的排后面、优先级更高。
+- `parse_constraints(text)`：只认「关键约束」小节（`SECTION_HEADING`），抽 `- **C1**：...` 形式的行，同节内重复 ID 取第一次；产出 `source=agents_md` 的 `Constraint`。
+
+**理由**：
+- **约束不是「可能需要」的信息，是「必须每轮在场」的信息。** 语义召回解决的是「哪几条相关」，而约束的前提是「一直都在」——按需召回会让它时有时无，那就不是约束了。
+- 不引入 sideQuery 就不需要额外 API 调用、不需要维护索引文件、不需要会话预算；代价是放弃「跨会话说一句就被记住」的能力，这个能力本项目不需要。
+- 按目录层级加载（而不是只读 cwd 那一份）对应 ADR-003 的判断：项目规则是结构化文本，Markdown 的层级本身就是天然的优先级表达。
+
+**三层对照**
+**Claude Code 原始设计**：memory 的核心规矩只有一条——只记「不可从当前项目状态推导」的信息（代码模式、架构、文件路径、git 历史这些读代码就能拿到，记下来只会制造漂移）。封闭四分类 `user` / `feedback` / `project` / `reference`，刻意不给自由标签以防标签膨胀导致召回时模糊匹配；`MEMORY.md` 是索引不是容器，带 200 行 / 25KB 双重截断；召回走 `sideQuery` 语义匹配而非关键词，每次最多 5 条，与第一次模型调用并行异步预取；每条带 freshness warning，超 1 天标注过期天数（`claude-code-from-scratch/docs/08-memory.md` 第 649-696 行）。
+**参考项目复现**：四分类照搬。`frontmatter.py` 解析元数据，`save_memory()`（`memory.py:95`）落盘，`load_memory_index()`（`memory.py:124`）做索引截断，`build_memory_prompt_section()`（`memory.py:343`）注入 system prompt，`start_memory_prefetch()`（`memory.py:301`）异步预取，`memory_freshness_warning()`（`memory.py:207`）做过期标注。对比总览在 `docs/08-memory.md` 第 688-696 行。
+**本实现差异**：**没有做跨会话记忆库**——没有 sideQuery、没有四分类、没有索引截断、没有 freshness、没有会话预算。我们做的是 CLAUDE.md 那一侧：把 `AGENTS.md` 当**约束来源**而不是知识库，产物直接进 `ConstraintStore`（ADR-004），用途是喂给压缩环节的约束通道（ADR-012）。相对 Claude Code「CLAUDE.md 从 CWD 向上遍历目录树」这条我们与之一致；相对它的 memory 系统，我们主动放弃。
+
+**结果**：`tests/test_agents_md.py` 23 个用例覆盖多层目录、缺失文件、格式异常、重复 ID。**尚未接入 `Compactor`**——`load_constraints()` 目前没有调用方，`source=agents_md` 这条来源只有单测覆盖（见 `docs/evidence.md` 待补）。
+
+## ADR-015：会话 checkpoint 用 JSONL 追加写，恢复时裁掉未配对的尾部
+
+**背景**：Day 5 的 `memory/session.py` 要解决「kill 后能恢复」。参考项目的 `session.py` 只有 1334 字节、是整体 JSON 覆盖写；Claude Code 用的是 JSONL 追加写。要选一个。
+
+**决策**：走 JSONL 追加写，并且比 Claude Code 多记一层状态。
+- 每次追加一行，记录两类：`message`（一条消息）与 `state`（这一轮结束时的轮数、token 数、约束快照）。
+- 每行自带 `at` 时间戳；写入的是消息副本，调用方之后改原对象不影响日志。
+- `load()` 回放日志：文件不存在、空文件、坏行都只是「少一点信息」，不抛异常。
+- `trim_incomplete_tail()` 在恢复时裁掉末尾未配对的工具交换。
+- `path=None` 时只在内存里转，测试与试跑用；默认不写文件。
+
+**理由**：
+- 整体 JSON 覆盖写有两个问题：写入中途崩溃会损坏整个文件；对话越长每次保存越慢。JSONL 每轮追加一行是 O(1)，崩溃最多丢最后一行，文件系统的 append 通常是原子的——这条判断直接来自 Claude Code。
+- 多记一个 `state` 类型，是因为本项目的恢复目标比「把消息数组装回去」多一项：**约束状态也要回来**。约束本身有独立落盘（`constraints.json`），但会话日志里带一份快照，才能还原「这个会话跑到第几轮、当时有哪些约束」，而不是靠猜。
+- 裁尾的粒度选「一条消息交换」而不是「一行文本」：JSONL 坏行确实只需跳过一行，但更常见的中断发生在**工具调用发出去了、结果还没回来**的时候——日志本身完好，缺的是语义上的一对。这种情况把发起调用的 assistant 和它的结果一起丢掉，比留着半截交换、让模型看到「我调了个工具但没有结果」更安全。
+- 坏了不抛异常、静默降级，沿用参考项目 `save_session` 那句「不能因为磁盘满让整个对话崩溃」的立场。
+
+**三层对照**
+**Claude Code 原始设计**：会话用 JSONL 追加写入。理由是整体 JSON 覆盖写「写入中途崩溃会损坏整个文件」且「对话越长每次保存越慢」；JSONL 每轮追加一行是 O(1)，崩溃最多丢最后一行，文件系统 append 通常原子，恢复时逐行解析、跳过末尾不完整的行（`claude-code-from-scratch/docs/04-cli-session.md` 第 596-600 行）。界面侧是 React/Ink 的终端 UI，入口 `src/entrypoints/cli.tsx`。
+**参考项目复现**：**没有采用 Claude Code 的 JSONL 方案**，退回整体 JSON 覆盖写——`save_session()`（`session.py:16`）把整个 `SessionData` 用 `json.dumps(indent=2)` 覆盖进 `~/.mini-claude/sessions/{id}.json`，`get_latest_session_id()` 按 `startTime` 排序取最近一次；`agent.py` 的 `autoSave()` 在每次 `agent.chat()` 完成后调用，保存失败静默忽略；恢复时把消息数组直接装回 Agent（`docs/04-cli-session.md` 第 442-503 行）。
+**本实现差异**：① 回到 Claude Code 的 JSONL 追加写，并把「跳过末尾不完整行」升级成 `trim_incomplete_tail()`——按消息交换裁，不是按行裁；② 记录分 `message` / `state` 两类，`state` 带轮数、token 数与约束快照，参考项目的 `SessionData` 只有 `metadata` + 两个消息数组；③ 默认不写文件，落点由调用方给，参考项目默认落盘到 `~/.mini-claude/`。
+
+**结果**：`tests/test_session.py` 23 个用例覆盖写入后重载、空文件、坏行跳过、未配对尾部裁剪、非数字字段容错。**尚未接入 loop / CLI**——「kill 后恢复」目前是模块级结论，没有端到端演示。
