@@ -18,9 +18,12 @@ from typing import Any, TextIO
 from agent.core.compaction import Compactor
 from agent.core.config import find_env_file, load_env_file
 from agent.core.constraints import DEFAULT_FILENAME, ConstraintStore
+from agent.core.context import estimate_tokens
 from agent.core.llm import BaseProvider, LLMConfigError, LLMError, OpenAICompatProvider
-from agent.core.loop import DEFAULT_MAX_TURNS, AgentLoop, LoopResult
+from agent.core.loop import DEFAULT_MAX_TURNS, SYSTEM_ROLE, AgentLoop, LoopResult
 from agent.memory import agents_md
+from agent.memory.session import DEFAULT_FILENAME as SESSION_FILENAME
+from agent.memory.session import SessionState, SessionStore
 from agent.tools import DangerApprover, build_default_registry
 
 __version__ = "0.1.0"
@@ -110,13 +113,63 @@ class _StreamPrinter:
             self._stream.flush()
 
 
-async def _run_task(loop: AgentLoop, task: str, provider: BaseProvider) -> LoopResult:
+def _new_messages(state: SessionState, result: LoopResult) -> list[dict[str, Any]]:
+    """算出这一轮新增的消息（不含历史）。
+
+    起点必须按 `AgentLoop.run()` 自己的规则定位：历史已带 system prompt 时它直接用，
+    否则会自己补一条。照着同一条规则算，才不会把 system prompt 重复写进日志。
+    """
+    carried = state.messages
+    offset = len(carried)
+    if not carried or carried[0].get("role") != SYSTEM_ROLE:
+        offset += 1
+    return [dict(item) for item in result.messages[offset:]]
+
+
+def _persist_session(
+    session: SessionStore,
+    state: SessionState,
+    result: LoopResult,
+    compactor: Compactor,
+    store: ConstraintStore,
+) -> None:
+    """把这一轮的结果追加进会话日志。
+
+    两种情况分开处理，保证回放出来的上下文与「当时活着的上下文」一致：
+
+    - 压缩改写过了（这一轮触发过任意一层）→ 先追一条 reset，再把整份上下文写进去。
+      此前那些被压掉的消息就不再生效，避免回放时「原文 + 摘要」两份都在。
+    - 没触发压缩 → 只追加这一轮新增的尾巴，`session.jsonl` 保持纯追加、O(新增量)。
+
+    写日志失败不能影响任务结果（磁盘满、只读目录都只是「这次没存上」）。
+    """
+    try:
+        if compactor.stats.events or not state.messages:
+            session.append_reset()
+            session.append_messages(result.messages)
+        else:
+            session.append_messages(_new_messages(state, result))
+        session.append_state(
+            turns=result.turns,
+            tokens=estimate_tokens(result.messages),
+            constraints=store.get_all(),
+        )
+    except OSError:
+        return
+
+
+async def _run_task(
+    loop: AgentLoop,
+    task: str,
+    provider: BaseProvider,
+    history: Sequence[Mapping[str, Any]] = (),
+) -> LoopResult:
     """在同一个事件循环里跑任务并释放 provider 连接。
 
     分开写是为了保证 `aclose()` 发生在循环还活着的时候。
     """
     try:
-        return await loop.run(task)
+        return await loop.run(task, history=history)
     finally:
         await provider.aclose()
 
@@ -207,6 +260,30 @@ def run_chat(args: argparse.Namespace) -> int:
             f"按文件刷新 {len(registration.updated)} 条",
             file=sys.stderr,
         )
+
+    # 会话 checkpoint：`session.jsonl` 逐轮追加，重启后把上下文接回来。
+    # 参考项目的 `session.py` 是「整体 JSON 覆盖写」（每次把整个 dict 重新 dump 一遍），
+    # 本实现回到 Claude Code 的 JSONL 追加写，并多带一份轮数 / token / 约束快照（ADR-015）。
+    session = SessionStore(root / CONSTRAINTS_DIR / SESSION_FILENAME)
+    state = session.load()
+    for restored in state.to_constraints():
+        if store.get(restored.id) is not None:
+            continue
+        try:
+            store.add(
+                restored.content,
+                source=restored.source,
+                priority=restored.priority,
+                constraint_id=restored.id,
+            )
+        except ValueError:
+            continue
+    if args.verbose and state.messages:
+        print(
+            f"[verbose] 已恢复会话：{len(state.messages)} 条消息，上一轮 {state.turns} 轮、"
+            f"约 {state.tokens} token",
+            file=sys.stderr,
+        )
     compactor = Compactor(summarize=_summarizer(provider), constraints=store, on_event=reporter)
     loop = AgentLoop(
         provider,
@@ -218,7 +295,7 @@ def run_chat(args: argparse.Namespace) -> int:
     )
 
     try:
-        result = asyncio.run(_run_task(loop, args.task, provider))
+        result = asyncio.run(_run_task(loop, args.task, provider, state.messages))
     except LLMError as exc:
         print(f"LLM 调用失败：{exc}", file=sys.stderr)
         return EXIT_TASK_FAILED
@@ -230,6 +307,8 @@ def run_chat(args: argparse.Namespace) -> int:
     if result.content and not printer.wrote_anything:
         print(result.content)
     printer.finish()
+
+    _persist_session(session, state, result, compactor, store)
 
     if args.verbose:
         print(f"[verbose] 压缩统计：{compactor.stats.summary()}", file=sys.stderr)

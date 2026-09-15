@@ -29,6 +29,11 @@ DEFAULT_FILENAME = "session.jsonl"
 
 RECORD_MESSAGE = "message"
 RECORD_STATE = "state"
+RECORD_RESET = "reset"
+"""「此前的消息全部作废」标记。
+
+压缩会改写整个上下文，追加一条 reset 比整份重写更便宜，也保住 append-only 的崩溃安全性。
+"""
 
 TOOL_ROLE = "tool"
 ASSISTANT_ROLE = "assistant"
@@ -145,6 +150,14 @@ class SessionStore:
             }
         )
 
+    def append_reset(self) -> None:
+        """标记「此前的消息作废」，之后的回放从这条开始。
+
+        `reset()` 是删文件，这里是往日志里追加一条标记——写入方永远是 append，
+        所以中途崩溃最多丢最后一行，不会把已落盘的历史一起毁掉。
+        """
+        self._write({"type": RECORD_RESET})
+
     def reset(self) -> None:
         """清空日志（下次写入会新建文件）。"""
         if self._path is not None and self._path.exists():
@@ -185,6 +198,8 @@ class SessionStore:
                 acc.tokens = _as_int(record.get("tokens"))
                 items = record.get("constraints")
                 acc.constraints = tuple(item for item in items or () if isinstance(item, dict))
+            elif kind == RECORD_RESET:
+                acc = _Accumulator()
         return SessionState(
             messages=tuple(trim_incomplete_tail(acc.messages)),
             turns=acc.turns,

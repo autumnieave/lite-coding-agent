@@ -288,21 +288,34 @@
 **背景**：Day 5 的 `memory/session.py` 要解决「kill 后能恢复」。参考项目的 `session.py` 只有 1334 字节、是整体 JSON 覆盖写；Claude Code 用的是 JSONL 追加写。要选一个。
 
 **决策**：走 JSONL 追加写，并且比 Claude Code 多记一层状态。
-- 每次追加一行，记录两类：`message`（一条消息）与 `state`（这一轮结束时的轮数、token 数、约束快照）。
+- 每次追加一行，记录三类：`message`（一条消息）、`state`（这一轮结束时的轮数、token 数、约束快照）、`reset`（「此前的消息作废」标记）。
 - 每行自带 `at` 时间戳；写入的是消息副本，调用方之后改原对象不影响日志。
 - `load()` 回放日志：文件不存在、空文件、坏行都只是「少一点信息」，不抛异常。
 - `trim_incomplete_tail()` 在恢复时裁掉末尾未配对的工具交换。
 - `path=None` 时只在内存里转，测试与试跑用；默认不写文件。
+- 触发过任意一层压缩时，先追一条 `reset` 再写整份上下文；没触发就只追加这一轮的新增尾巴。
 
 **理由**：
 - 整体 JSON 覆盖写有两个问题：写入中途崩溃会损坏整个文件；对话越长每次保存越慢。JSONL 每轮追加一行是 O(1)，崩溃最多丢最后一行，文件系统的 append 通常是原子的——这条判断直接来自 Claude Code。
 - 多记一个 `state` 类型，是因为本项目的恢复目标比「把消息数组装回去」多一项：**约束状态也要回来**。约束本身有独立落盘（`constraints.json`），但会话日志里带一份快照，才能还原「这个会话跑到第几轮、当时有哪些约束」，而不是靠猜。
 - 裁尾的粒度选「一条消息交换」而不是「一行文本」：JSONL 坏行确实只需跳过一行，但更常见的中断发生在**工具调用发出去了、结果还没回来**的时候——日志本身完好，缺的是语义上的一对。这种情况把发起调用的 assistant 和它的结果一起丢掉，比留着半截交换、让模型看到「我调了个工具但没有结果」更安全。
-- 坏了不抛异常、静默降级，沿用参考项目 `save_session` 那句「不能因为磁盘满让整个对话崩溃」的立场。
+- 坏了不抛异常、静默降级，沿用参考项目 `save_session` 那句「不能因为磁盘满让整个对话崩溃」的立场。写日志失败只记「这次没存上」，不影响任务退出码。
+- 为什么加 `reset` 记录而不是整份重写：我们的循环会**改写上下文**（压缩），而 checkpoint 必须等于「当时活着的上下文」。整份重写会丢掉 append-only 的崩溃安全性（写一半崩了就毁掉整份历史），O(1) 追加也退化成 O(n)。追一条 `reset` 就够：回放时只认最后一条 `reset` 之后的内容，写入方永远只 append。
 
 **三层对照**
 **Claude Code 原始设计**：会话用 JSONL 追加写入。理由是整体 JSON 覆盖写「写入中途崩溃会损坏整个文件」且「对话越长每次保存越慢」；JSONL 每轮追加一行是 O(1)，崩溃最多丢最后一行，文件系统 append 通常原子，恢复时逐行解析、跳过末尾不完整的行（`claude-code-from-scratch/docs/04-cli-session.md` 第 596-600 行）。界面侧是 React/Ink 的终端 UI，入口 `src/entrypoints/cli.tsx`。
 **参考项目复现**：**没有采用 Claude Code 的 JSONL 方案**，退回整体 JSON 覆盖写——`save_session()`（`session.py:16`）把整个 `SessionData` 用 `json.dumps(indent=2)` 覆盖进 `~/.mini-claude/sessions/{id}.json`，`get_latest_session_id()` 按 `startTime` 排序取最近一次；`agent.py` 的 `autoSave()` 在每次 `agent.chat()` 完成后调用，保存失败静默忽略；恢复时把消息数组直接装回 Agent（`docs/04-cli-session.md` 第 442-503 行）。
-**本实现差异**：① 回到 Claude Code 的 JSONL 追加写，并把「跳过末尾不完整行」升级成 `trim_incomplete_tail()`——按消息交换裁，不是按行裁；② 记录分 `message` / `state` 两类，`state` 带轮数、token 数与约束快照，参考项目的 `SessionData` 只有 `metadata` + 两个消息数组；③ 默认不写文件，落点由调用方给，参考项目默认落盘到 `~/.mini-claude/`。
+**本实现差异**：① 回到 Claude Code 的 JSONL 追加写，并把「跳过末尾不完整行」升级成 `trim_incomplete_tail()`——按消息交换裁，不是按行裁；② 记录分 `message` / `state` / `reset` 三类，`state` 带轮数、token 数与约束快照，参考项目的 `SessionData` 只有 `metadata` + 两个消息数组；③ 默认不写文件，落点由调用方给，参考项目默认落盘到 `~/.mini-claude/`；④ **`reset` 标记是我们加的**——Claude Code 的会话日志记的是「发生过什么」，我们要的是「现在活着的是什么」，压缩改写上下文时必须能作废此前那些已被摘要替代的消息，否则回放会「原文 + 摘要」两份都在。
 
-**结果**：`tests/test_session.py` 23 个用例覆盖写入后重载、空文件、坏行跳过、未配对尾部裁剪、非数字字段容错。**尚未接入 loop / CLI**——「kill 后恢复」目前是模块级结论，没有端到端演示。
+**结果**：Day 6 接线完成——`cli/main.py` 在装配阶段建 `SessionStore(root / ".lite-agent" / "session.jsonl")`，`load()` 出来的消息历史接到 `AgentLoop.run(history=...)`，约束快照补进 `ConstraintStore`；每轮结束由 `_persist_session()` 追加。
+
+实跑验证（scratch 工作区，两次独立进程 + 一次人为损坏）：
+
+1. 第一次运行：读文件回答问题，`session.jsonl` 落 7 行（1 条 `reset` + 6 条 `message` + 1 条 `state`）。
+2. 往文件尾部追加半行 JSON（模拟 kill -9 写一半）。
+3. 第二次运行（新进程）：verbose 打出 `已恢复会话：6 条消息，上一轮 2 轮、约 78 token`，坏行被静默跳过；问「刚才的校验码加 1」，模型**不调用任何工具**直接答出 `738292`——上下文确实接回来了。
+4. 第三次运行后文件共 14 行、`reset` 仍只有 1 条 → 无压缩时确实是纯追加，没有整份重写。
+
+**一处已知限制**：写日志发生在**每轮任务结束时**，所以 `reset` 之前的中间轮次不进日志；被 kill 的那一轮本身不留痕（下一轮从上一个完整状态继续）。这是 checkpoint 语义，不是崩溃点恢复。
+
+**测试**：`tests/test_session.py` 26 条（含 3 条 `reset` 回放语义）+ `tests/test_cli.py` 6 条接线用例（含写日志失败不影响退出码）。
