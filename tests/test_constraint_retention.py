@@ -25,7 +25,11 @@ KEEP_RECENT = 10
 
 
 def _config(**overrides: object) -> CompactionConfig:
-    base: dict[str, object] = {"context_window": WINDOW, "keep_recent": KEEP_RECENT}
+    base: dict[str, object] = {
+        "context_window": WINDOW,
+        "keep_recent": KEEP_RECENT,
+        "retain_ladder": (KEEP_RECENT,),
+    }
     base.update(overrides)
     return CompactionConfig(**base)  # type: ignore[arg-type]
 
