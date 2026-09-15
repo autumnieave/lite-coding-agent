@@ -5,11 +5,14 @@ from __future__ import annotations
 import pytest
 
 from agent.core.compaction import (
+    SUMMARY_PREFIX,
     TIER4,
     CompactionConfig,
     Compactor,
+    compose_summary,
+    summary_message,
 )
-from agent.core.llm import user_message
+from agent.core.llm import system_message, user_message
 
 WINDOW = 10_000
 FIRST_RUNG = 10
@@ -36,6 +39,14 @@ class _Recorder:
     async def __call__(self, messages: object) -> str:
         self.requests.append(list(messages))  # type: ignore[arg-type]
         return self.reply
+
+
+def _summaries(messages: list[dict[str, object]]) -> list[str]:
+    return [
+        str(item.get("content") or "")
+        for item in messages
+        if item.get("role") == "system" and SUMMARY_PREFIX in str(item.get("content") or "")
+    ]
 
 
 async def _compact_once(
@@ -121,3 +132,52 @@ async def test_failed_summary_keeps_the_history_untouched() -> None:
     messages = _filler(20, size=4000)
     assert await compactor.compact(messages) == messages
     assert len(recorder.requests) == 1, "摘要为空时不再往更窄的档位重试"
+
+
+# ---------- 摘要替换 ----------
+
+
+def test_compose_drops_the_previous_summary() -> None:
+    older = [system_message("原始系统提示"), summary_message("旧摘要"), user_message("旧消息")]
+    recent = [user_message("新消息")]
+    result = compose_summary(older, recent, "新摘要")
+    assert [item["role"] for item in result] == ["system", "system", "user"]
+    assert result[0]["content"] == "原始系统提示"
+    assert "新摘要" in result[1]["content"]
+    assert "旧摘要" not in "".join(str(item["content"]) for item in result)
+
+
+def test_compose_keeps_every_real_system_prompt() -> None:
+    older = [system_message("系统提示一"), summary_message("旧摘要"), system_message("系统提示二")]
+    result = compose_summary(older, [], "新摘要")
+    assert [item["content"] for item in result[:2]] == ["系统提示一", "系统提示二"]
+    assert len(result) == 3
+
+
+@pytest.mark.asyncio
+async def test_repeated_compaction_keeps_exactly_one_summary() -> None:
+    recorder = _Recorder("摘要正文")
+    compactor = Compactor(_config(retain_ladder=(FIRST_RUNG,)), summarize=recorder)
+    messages = _filler(100, size=400)
+
+    for step in range(3):
+        if step:
+            messages = [*messages, *_filler(95, size=400)]  # 再攒到触发线以上
+        messages = await compactor.compact(messages)
+
+    assert len(_summaries(messages)) == 1, "压 3 次也只该有一条摘要"
+    assert compactor.stats.counts[TIER4] == 3
+    assert len(messages) == 1 + FIRST_RUNG
+
+
+@pytest.mark.asyncio
+async def test_previous_summary_is_fed_to_the_summarizer() -> None:
+    recorder = _Recorder("摘要正文")
+    compactor = Compactor(_config(retain_ladder=(FIRST_RUNG,)), summarize=recorder)
+    messages = _filler(100, size=400)
+
+    first = await compactor.compact(messages)
+    await compactor.compact([*first, *_filler(95, size=400)])
+
+    body = "".join(str(item.get("content") or "") for item in recorder.requests[1])
+    assert "摘要正文" in body, "旧摘要要先喂给摘要器，否则信息在替换时凭空消失"

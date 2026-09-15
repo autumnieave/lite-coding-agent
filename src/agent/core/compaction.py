@@ -444,8 +444,17 @@ def compose_summary(
     recent: Sequence[Mapping[str, Any]],
     summary: str,
 ) -> list[dict[str, Any]]:
-    """摘要替换掉较早的历史，原有 system prompt 保留在最前面。"""
-    head = [dict(item) for item in older if item.get("role") == "system"]
+    """摘要替换掉较早的历史，原有 system prompt 保留在最前面。
+
+    上一次注入的摘要（`SUMMARY_PREFIX` 开头的那条）不再原样保留：它的内容已经作为
+    输入喂给了这一次的摘要，再留一份就是逐轮叠加——压 10 次就有 10 条摘要常驻，
+    既白占 token，也让「上下文回收了多少」这个数字失真。
+    """
+    head = [
+        dict(item)
+        for item in older
+        if item.get("role") == "system" and SUMMARY_PREFIX not in str(item.get("content") or "")
+    ]
     return [*head, summary_message(summary), *[dict(item) for item in recent]]
 
 
