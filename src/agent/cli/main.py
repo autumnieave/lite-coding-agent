@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import shlex
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -21,10 +23,12 @@ from agent.core.constraints import DEFAULT_FILENAME, ConstraintStore
 from agent.core.context import estimate_tokens
 from agent.core.llm import BaseProvider, LLMConfigError, LLMError, OpenAICompatProvider
 from agent.core.loop import DEFAULT_MAX_TURNS, SYSTEM_ROLE, AgentLoop, LoopResult
+from agent.mcp.client import McpClient, McpError
 from agent.memory import agents_md
 from agent.memory.session import DEFAULT_FILENAME as SESSION_FILENAME
 from agent.memory.session import SessionState, SessionStore
 from agent.tools import DangerApprover, build_default_registry
+from agent.tools.registry import ToolRegistry
 
 __version__ = "0.1.0"
 
@@ -48,6 +52,17 @@ def _add_chat_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPar
         help="工具调用轮数上限，默认 %(default)s",
     )
     parser.add_argument("--root", default=".", help="工作区根目录，默认当前目录")
+    parser.add_argument(
+        "--mcp-server",
+        action="append",
+        default=[],
+        metavar="[NAME=]COMMAND",
+        help=(
+            "启动一个 MCP server，并把它提供的工具注册进工具表；可重复。"
+            '例：--mcp-server "echo=python examples/echo_mcp_server.py"；'
+            "省略 NAME 时取命令最后一段的文件名"
+        ),
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="把每次工具调用打印到标准错误")
     return parser
 
@@ -113,6 +128,44 @@ class _StreamPrinter:
             self._stream.flush()
 
 
+@dataclass(frozen=True, slots=True)
+class McpServerSpec:
+    """一条 `--mcp-server` 参数解析后的结果。"""
+
+    name: str
+    command: str
+    args: tuple[str, ...]
+
+
+def _split_command(command: str) -> list[str]:
+    """按 shell 词法切分命令行。
+
+    Windows 下不能用 POSIX 规则：`shlex.split` 会把反斜杠当转义符，
+    `C:\\path\\server.py` 会被啃成 `C:pathserver.py`。
+    """
+    if sys.platform == "win32":
+        return [token.strip('"') for token in shlex.split(command, posix=False) if token.strip('"')]
+    return shlex.split(command)
+
+
+def _parse_mcp_server(spec: str) -> McpServerSpec:
+    """解析 `NAME=COMMAND` 或裸 `COMMAND`。
+
+    名字只用于拼三段式工具名（`mcp__<name>__<tool>`），省略时取命令最后一段的文件名。
+    """
+    raw = spec.strip()
+    name = ""
+    head, sep, tail = raw.partition("=")
+    if sep and head.strip() and " " not in head.strip():
+        name, raw = head.strip(), tail.strip()
+    parts = _split_command(raw)
+    if not parts:
+        raise ValueError("--mcp-server 不能为空")
+    if not name:
+        name = Path(parts[-1]).stem or "mcp"
+    return McpServerSpec(name=name, command=parts[0], args=tuple(parts[1:]))
+
+
 def _new_messages(state: SessionState, result: LoopResult) -> list[dict[str, Any]]:
     """算出这一轮新增的消息（不含历史）。
 
@@ -163,14 +216,31 @@ async def _run_task(
     task: str,
     provider: BaseProvider,
     history: Sequence[Mapping[str, Any]] = (),
+    *,
+    registry: ToolRegistry | None = None,
+    mcp: McpClient | None = None,
+    servers: Sequence[McpServerSpec] = (),
 ) -> LoopResult:
-    """在同一个事件循环里跑任务并释放 provider 连接。
+    """在同一个事件循环里连接 MCP、跑任务，并释放所有资源。
 
-    分开写是为了保证 `aclose()` 发生在循环还活着的时候。
+    分开写是为了保证 MCP 子进程与 provider 连接的回收都发生在循环还活着的时候。
+    单个 server 连不上只警告并跳过，其余工具照常可用。
     """
     try:
+        if mcp is not None and registry is not None:
+            for server in servers:
+                try:
+                    await mcp.connect(server.name, server.command, server.args)
+                except McpError as exc:
+                    print(
+                        f"警告：MCP server「{server.name}」连接失败，已跳过：{exc}",
+                        file=sys.stderr,
+                    )
+            mcp.register_into(registry)
         return await loop.run(task, history=history)
     finally:
+        if mcp is not None:
+            await mcp.close()
         await provider.aclose()
 
 
@@ -284,10 +354,17 @@ def run_chat(args: argparse.Namespace) -> int:
             f"约 {state.tokens} token",
             file=sys.stderr,
         )
+    try:
+        mcp_servers = [_parse_mcp_server(spec) for spec in args.mcp_server]
+    except ValueError as exc:
+        print(f"错误：{exc}", file=sys.stderr)
+        return EXIT_USAGE_ERROR
+
     compactor = Compactor(summarize=_summarizer(provider), constraints=store, on_event=reporter)
+    registry = build_default_registry(root, approver=_build_approver())
     loop = AgentLoop(
         provider,
-        build_default_registry(root, approver=_build_approver()),
+        registry,
         max_turns=args.max_turns,
         on_event=reporter,
         on_text=printer,
@@ -295,8 +372,20 @@ def run_chat(args: argparse.Namespace) -> int:
         constraints=store,
     )
 
+    mcp = McpClient(on_event=reporter) if mcp_servers else None
+
     try:
-        result = asyncio.run(_run_task(loop, args.task, provider, state.messages))
+        result = asyncio.run(
+            _run_task(
+                loop,
+                args.task,
+                provider,
+                state.messages,
+                registry=registry,
+                mcp=mcp,
+                servers=mcp_servers,
+            )
+        )
     except LLMError as exc:
         print(f"LLM 调用失败：{exc}", file=sys.stderr)
         return EXIT_TASK_FAILED
