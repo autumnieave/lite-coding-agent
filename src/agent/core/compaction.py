@@ -42,6 +42,14 @@ TIER_LABELS = {
 }
 
 DEFAULT_KEEP_RECENT = 10
+DEFAULT_RETAIN_LADDER: tuple[int, ...] = (10, 5, 3, 1)
+"""压缩后保留窗口的候选序列，从宽到窄。
+
+只压一次、固定留最近 10 条是不够的：那 10 条如果本身就常驻在触发线以上，
+下一轮立刻又满足摘要条件，于是每轮都重压一次（实测 25 轮触发 24 次 Tier 4）。
+压完仍然高于触发线时，就换更窄的保留窗口再压一遍。
+"""
+
 DEFAULT_KEEP_RECENT_RESULTS = 3
 DEFAULT_IDLE_SECONDS = 300.0
 DEFAULT_BUDGET_CHARS = 30_000
@@ -116,7 +124,10 @@ class CompactionConfig:
     """Tier 4 的触发线。"""
 
     keep_recent: int = DEFAULT_KEEP_RECENT
-    """压缩后保留的最近消息条数。"""
+    """压缩后优先保留的最近消息条数（保留窗口的第一档）。"""
+
+    retain_ladder: tuple[int, ...] = DEFAULT_RETAIN_LADDER
+    """压完仍高于触发线时依次改用的更窄保留窗口，见 `retain_candidates()`。"""
 
     keep_recent_results: int = DEFAULT_KEEP_RECENT_RESULTS
     """Tier 2/3 永远保留的最近工具结果条数。"""
@@ -134,6 +145,17 @@ class CompactionConfig:
         if ratio >= self.tight_ratio:
             return self.tight_budget_chars
         return self.budget_chars
+
+    def retain_candidates(self) -> tuple[int, ...]:
+        """保留窗口的候选序列：先试 `keep_recent`，再按阶梯逐级收窄。
+
+        只取严格小于第一档且不重复的档位；`keep_recent` 比阶梯还窄时就只有它自己。
+        """
+        narrower = sorted(
+            {candidate for candidate in self.retain_ladder if 0 < candidate < self.keep_recent},
+            reverse=True,
+        )
+        return (self.keep_recent, *narrower)
 
 
 @dataclass(frozen=True, slots=True)
@@ -571,22 +593,43 @@ class Compactor:
         return any(item.get("role") != "system" for item in older)
 
     async def _run_tier4(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        older, recent = split_messages(messages, keep_recent=self._config.keep_recent)
-        if not older or not self._has_new_material(older):
-            # 历史还不够长，或只剩上一次的摘要：压了也省不下东西。
-            return messages
-        started = time.perf_counter()
+        """摘要历史，并按需逐级收窄保留窗口，直到压到触发线以下。
+
+        固定留最近 N 条的问题是：这 N 条本身就常驻在触发线以上时，下一轮立刻又满足
+        摘要条件，于是每轮都重压一次、每轮多花一次模型调用（实测 25 轮触发 24 次）。
+        这里从 `retain_candidates()` 的第一档开始试，压完仍高于触发线就换更窄的一档，
+        用当下多一次摘要调用，换掉后面每一轮的摘要调用。
+        """
         assert self._summarize is not None  # 由调用方保证
+        started = time.perf_counter()
         registered = self._constraints.get_all() if self._constraints is not None else ()
-        request = build_summary_request(older, constraints=registered)
-        summary = (await self._summarize(request) or "").strip()
-        if not summary:
-            # 摘要失败就保持原样，宁可多占 token 也不能把历史丢空。
+        result: list[dict[str, Any]] | None = None
+        keep_used = 0
+        replenished = 0
+        attempts = 0
+        for keep in self._config.retain_candidates():
+            older, recent = split_messages(messages, keep_recent=keep)
+            if not older or not self._has_new_material(older):
+                # 历史还不够长，或只剩上一次的摘要：压了也省不下东西。
+                break
+            summary = (
+                await self._summarize(build_summary_request(older, constraints=registered)) or ""
+            ).strip()
+            if not summary:
+                # 摘要失败就保持原样，宁可多占 token 也不能把历史丢空。
+                return messages
+            summary, replenished = self.ensure_constraints(summary)
+            self._stats.replenished += replenished
+            result = compose_summary(older, recent, summary)
+            keep_used = keep
+            attempts += 1
+            if self._ratio(result) < self._config.trigger_ratio:
+                break
+        if result is None:
             return messages
-        summary, replenished = self.ensure_constraints(summary)
-        self._stats.replenished += replenished
-        result = compose_summary(older, recent, summary)
-        detail = f"{len(older)} 条历史压成 1 条摘要，保留最近 {len(recent)} 条"
+        detail = f"{len(messages) - keep_used} 条历史压成 1 条摘要，保留最近 {keep_used} 条"
+        if attempts > 1:
+            detail += f"，收窄保留窗口 {attempts} 档才降到 {self._config.trigger_ratio:.0%} 以下"
         if replenished:
             detail += f"，补回 {replenished} 条约束"
         self._record(TIER4, messages, result, started, detail)
