@@ -11,7 +11,8 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from agent.core.compaction import Compactor
+from agent.core.compaction import SUMMARY_PREFIX, Compactor
+from agent.core.constraints import SYSTEM_PROMPT_HEADING, ConstraintStore
 from agent.core.llm import (
     BaseProvider,
     TextCallback,
@@ -73,6 +74,17 @@ class LoopResult:
         return self.stopped_reason == COMPLETED
 
 
+def _is_base_prompt(message: Mapping[str, Any]) -> bool:
+    """判断一条消息是不是「基础 system prompt」。
+
+    摘要也是 system 消息，但它由 `compose_summary` 放在 head 之后，不会是第一条；
+    这里再挡一道，免得将来顺序变了把摘要覆盖掉。
+    """
+    if message.get("role") != SYSTEM_ROLE:
+        return False
+    return SUMMARY_PREFIX not in str(message.get("content") or "")
+
+
 def _preview(text: str, limit: int = EVENT_PREVIEW_LIMIT) -> str:
     """把可能很长的工具输出压成一行，便于在终端展示。"""
     single_line = " ".join(text.split())
@@ -98,10 +110,15 @@ class AgentLoop:
         on_event: Callable[[str], None] | None = None,
         on_text: TextCallback | None = None,
         compactor: Compactor | None = None,
+        constraints: ConstraintStore | None = None,
     ) -> None:
         """`on_event` 接收工具进度，`on_text` 接收模型增量输出。
 
         `compactor` 为 None 时不做任何压缩；传入后每次 LLM 调用前压一次历史。
+
+        `constraints` 传了就每轮把清单追加到 system prompt 末尾（ADR-016）。这是与压缩
+        通道并行的第二条路：短任务不触发压缩时，约束照样在上下文里；长任务压缩时摘要
+        Prompt 会再保留一次，两边都丢才会真丢。
         """
         if max_turns < 1:
             raise ValueError("max_turns 必须 >= 1")
@@ -112,10 +129,27 @@ class AgentLoop:
         self._on_event = on_event
         self._on_text = on_text
         self._compactor = compactor
+        self._constraints = constraints
 
     @property
     def max_turns(self) -> int:
         return self._max_turns
+
+    @property
+    def constraints(self) -> ConstraintStore | None:
+        return self._constraints
+
+    def build_system_prompt(self) -> str:
+        """拼出这一轮实际使用的 system prompt：基础 prompt + 当前约束清单。
+
+        每轮重新拼，所以 AGENTS.md 改了约束之后下一轮就生效，不用等压缩。
+        """
+        if self._constraints is None:
+            return self._system_prompt
+        listing = self._constraints.render()
+        if not listing:
+            return self._system_prompt
+        return f"{self._system_prompt}\n\n{SYSTEM_PROMPT_HEADING}\n{listing}"
 
     async def run(
         self,
@@ -124,12 +158,14 @@ class AgentLoop:
     ) -> LoopResult:
         """执行一次任务。LLM 调用失败会抛 `LLMError`，工具失败不会。"""
         carried = [dict(item) for item in history]
-        if carried and carried[0].get("role") == SYSTEM_ROLE:
-            # 多轮会话：历史里已经带了 system prompt（可能还带着注入的摘要），
-            # 再补一条会逐轮累积成一大堆重复 prompt。
-            messages: list[dict[str, Any]] = carried
+        prompt = self.build_system_prompt()
+        if carried and _is_base_prompt(carried[0]):
+            # 多轮会话：历史第一条就是基础 system prompt（压缩时它排在摘要前面），
+            # 再补一条会逐轮累积成一大堆重复 prompt。但要按当前约束重建它——
+            # 直接沿用旧的会让 AGENTS.md 的改动晚一轮才生效。
+            messages: list[dict[str, Any]] = [system_message(prompt), *carried[1:]]
         else:
-            messages = [system_message(self._system_prompt), *carried]
+            messages = [system_message(prompt), *carried]
         messages.append(user_message(task))
 
         last_content = ""
