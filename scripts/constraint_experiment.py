@@ -47,6 +47,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from agent.core.compaction import (  # noqa: E402
+    SUMMARY_PREFIX,
     CompactionConfig,
     Compactor,
 )
@@ -314,6 +315,12 @@ async def run_once(
         checks = judge(replies.get("probe_json", ""), replies.get("probe_repeat", ""))
         preserved, verbatim = count_preserved(snapshot, constraints)
         counts = compactor.stats.counts
+        # 最终上下文里还剩几条摘要消息。修掉 compose_summary 的叠加后应当恒为 1。
+        summary_messages = sum(
+            1
+            for item in history
+            if item.get("role") == "system" and SUMMARY_PREFIX in str(item.get("content") or "")
+        )
         return {
             "run_id": run_id,
             "group": group,
@@ -329,6 +336,7 @@ async def run_once(
             "checks": checks,
             "tiers_triggered": counts,
             "summary_calls": counts.get("tier4", 0),
+            "summary_messages": summary_messages,
             "llm_calls": calls,
             "duration_s": round(time.perf_counter() - started, 1),
         }
@@ -342,9 +350,9 @@ async def run_once(
 def aggregate(records: Sequence[Mapping[str, Any]]) -> str:
     header = (
         "| 组 | 次数 | 保留率 | 逐字保留率 | 补录条数 | "
-        "违反检查数 | 任务成功率 | 代号召回率 | Tier 4 次数 |"
+        "违反检查数 | 任务成功率 | 代号召回率 | Tier 4 次数 | 摘要消息数 |"
     )
-    lines = [header, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
+    lines = [header, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
 
     for group in GROUPS:
         rows = [item for item in records if item["group"] == group]
@@ -359,7 +367,8 @@ def aggregate(records: Sequence[Mapping[str, Any]]) -> str:
             f"{sum(int(item['violated']) for item in rows)} | "
             f"{sum(bool(item['task_success']) for item in rows)}/{len(rows)} | "
             f"{sum(int(item['codes_recalled']) for item in rows) / total:.1%} | "
-            f"{sum(int(item['summary_calls']) for item in rows)} |"
+            f"{sum(int(item['summary_calls']) for item in rows)} | "
+            f"{max(int(item.get('summary_messages', 0)) for item in rows)} |"
         )
     return "\n".join(lines)
 
