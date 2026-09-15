@@ -28,6 +28,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from agent.core.constraints import Constraint, ConstraintStore
 from agent.tools.base import ToolResult
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -280,11 +281,21 @@ class McpTool:
 
     与本地 `Tool` 的区别是**参数不经过 Pydantic 校验**：schema 由 server 提供，
     参数该长什么样是 server 说了算，本地只做 JSON 解析。
+
+    `constraints` 传了就在请求发出**之前**过一道约束校验（ADR-018，纯自研）：
+    MCP 工具来自外部、未经本项目审查，所以在它外面加一道闸，命中禁止类约束就直接拒绝。
     """
 
-    def __init__(self, connection: McpConnection, info: McpToolInfo) -> None:
+    def __init__(
+        self,
+        connection: McpConnection,
+        info: McpToolInfo,
+        *,
+        constraints: ConstraintStore | None = None,
+    ) -> None:
         self._connection = connection
         self._info = info
+        self._constraints = constraints
 
     @property
     def name(self) -> str:
@@ -315,11 +326,24 @@ class McpTool:
         if not isinstance(payload, dict):
             return ToolResult.failure("参数必须是 JSON 对象")
 
+        blocked = self._blocking_constraint()
+        if blocked is not None:
+            return ToolResult.failure(
+                f"该调用被约束 [{blocked.id}] 拦截：{blocked.content}"
+                "（本地约束校验拦下，请求没有发给 MCP server）"
+            )
+
         try:
             text = await self._connection.call_tool(self._info.name, payload)
         except McpError as exc:
             return ToolResult.failure(f"MCP 工具调用失败：{exc}")
         return ToolResult.success(text)
+
+    def _blocking_constraint(self) -> Constraint | None:
+        """查一遍约束存储，看有没有禁止调用这个工具。"""
+        if self._constraints is None:
+            return None
+        return self._constraints.blocking_for(self.name, self._info.name)
 
 
 class McpClient:
@@ -330,9 +354,11 @@ class McpClient:
         *,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         on_event: Callable[[str], None] | None = None,
+        constraints: ConstraintStore | None = None,
     ) -> None:
         self._timeout = timeout
         self._on_event = on_event
+        self._constraints = constraints
         self._connections: list[McpConnection] = []
         self._tools: list[McpTool] = []
 
@@ -357,7 +383,7 @@ class McpClient:
             await connection.close()
             raise
         self._connections.append(connection)
-        created = tuple(McpTool(connection, info) for info in infos)
+        created = tuple(McpTool(connection, info, constraints=self._constraints) for info in infos)
         self._tools.extend(created)
         self._emit(f"MCP server「{server_name}」已连接，发现 {len(created)} 个工具")
         return created

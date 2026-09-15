@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from agent.core.constraints import SOURCE_USER, ConstraintStore
 from agent.mcp.client import McpClient, McpConnection, McpError, McpTool, McpToolInfo
 from agent.tools.registry import ToolRegistry
 
@@ -233,3 +234,47 @@ async def test_mcp_tool_spec_needs_no_connection() -> None:
     tool = McpTool(McpConnection("echo", "unused"), info)
     assert tool.description == "来自 MCP server「echo」的工具 echo"
     assert tool.spec()["function"]["parameters"] == {"type": "object", "properties": {}}
+
+
+# ---------- 约束校验（ADR-018，纯自研） ----------
+
+
+async def test_blocking_constraint_stops_the_call_before_it_leaves(server_script: Path) -> None:
+    """命中约束时请求不该发出去。
+
+    断言技巧：先 `close()` 掉连接。约束校验若发生在发请求**之后**，
+    报错会是「尚未连接」；顺序对才会报「被约束」。
+    """
+    store = ConstraintStore()
+    store.add("禁止调用 echo 工具", source=SOURCE_USER)
+    info = McpToolInfo("echo", "echo", "", {"type": "object"})
+    connection = McpConnection("echo", *_command(server_script, "echo"))
+    await connection.connect()
+    tool = McpTool(connection, info, constraints=store)
+    await connection.close()
+
+    result = await tool.run('{"text": "hi"}')
+
+    assert not result.ok
+    assert "被约束" in result.content
+    assert "尚未连接" not in result.content
+
+
+async def test_unrelated_constraint_lets_the_call_through(server_script: Path) -> None:
+    """McpClient 会把约束存储透传给工具，但只拦命中的那一个。"""
+    store = ConstraintStore()
+    store.add("禁止调用 write_file 工具", source=SOURCE_USER)
+    client = McpClient(timeout=10.0, constraints=store)
+    await client.connect("echo", *_command(server_script, "echo"))
+    try:
+        result = await client.tools[0].run('{"text": "hi"}')
+    finally:
+        await client.close()
+
+    assert result.ok
+    assert result.content == '{"text": "hi"}'
+
+
+async def test_without_constraint_store_nothing_is_blocked(echo_client: McpClient) -> None:
+    result = await echo_client.tools[0].run('{"text": "hi"}')
+    assert result.ok

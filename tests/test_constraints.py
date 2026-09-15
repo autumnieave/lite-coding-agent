@@ -10,6 +10,7 @@ import pytest
 
 from agent.core.constraints import (
     CONSTRAINT_MARKER,
+    PROHIBITION_KEYWORDS,
     SOURCE_AGENT,
     SOURCE_AGENTS_MD,
     SOURCE_USER,
@@ -323,3 +324,56 @@ def test_message_text_reads_only_string_content() -> None:
 def test_constraint_round_trips_through_dict() -> None:
     item = Constraint(id="a", content="内容", source=SOURCE_AGENT, priority=3, created_at="t")
     assert Constraint.from_dict(item.to_dict()) == item
+
+
+# ---------- 工具约束：blocking_for（ADR-018） ----------
+
+
+def test_blocking_for_matches_prohibition_plus_tool_name() -> None:
+    store = _store()
+    store.add("禁止调用 echo 工具", source=SOURCE_USER)
+
+    blocked = store.blocking_for("mcp__echo__echo", "echo")
+
+    assert blocked is not None
+    assert blocked.content == "禁止调用 echo 工具"
+
+
+def test_blocking_for_ignores_constraint_without_prohibition_word() -> None:
+    store = _store()
+    store.add("调用 echo 工具时必须传 text 参数", source=SOURCE_USER)
+
+    assert store.blocking_for("mcp__echo__echo", "echo") is None
+
+
+def test_blocking_for_ignores_prohibition_about_another_tool() -> None:
+    store = _store()
+    store.add("禁止调用 write_file 工具", source=SOURCE_USER)
+
+    assert store.blocking_for("mcp__echo__echo", "echo") is None
+
+
+def test_blocking_for_returns_none_when_no_tool_names_given() -> None:
+    store = _store()
+    store.add("禁止一切外部工具", source=SOURCE_USER)
+
+    assert store.blocking_for("", "") is None
+
+
+def test_blocking_for_prefers_the_highest_priority_match() -> None:
+    store = _store()
+    store.add("禁止调用 echo", source=SOURCE_USER, priority=0, constraint_id="low")
+    store.add("严禁使用 echo 工具", source=SOURCE_USER, priority=5, constraint_id="high")
+
+    blocked = store.blocking_for("mcp__echo__echo", "echo")
+
+    assert blocked is not None
+    assert blocked.id == "high"
+
+
+@pytest.mark.parametrize("keyword", PROHIBITION_KEYWORDS)
+def test_blocking_for_recognises_every_prohibition_keyword(keyword: str) -> None:
+    store = _store()
+    store.add(f"{keyword}调用 echo 工具", source=SOURCE_USER)
+
+    assert store.blocking_for("mcp__echo__echo", "echo") is not None

@@ -185,3 +185,31 @@ def test_invalid_mcp_server_spec_returns_usage_error(
 
     assert code == cli.EXIT_USAGE_ERROR
     assert "不能为空" in capsys.readouterr().err
+
+
+def test_agents_md_constraint_blocks_the_mcp_call(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], workspace: Path
+) -> None:
+    """AGENTS.md 里写一条「禁止调用 echo 工具」，MCP 调用就该被拦下并回填给模型。"""
+    (workspace / "AGENTS.md").write_text(
+        "# 项目规则\n\n## 关键约束\n\n- **C9**：禁止调用 echo 工具。\n",
+        encoding="utf-8",
+    )
+    provider = _ScriptedProvider(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=(ToolCall(id="c1", name="mcp__echo__echo", arguments='{"text": "hi"}'),),
+            ),
+            LLMResponse(content="done"),
+        ]
+    )
+    _use_provider(monkeypatch, provider)
+
+    code = cli.main(["chat", "说 hi", "--root", str(workspace), "--mcp-server", _echo_spec("echo")])
+
+    assert code == cli.EXIT_OK
+    tool_message = [m for m in provider.calls[1]["messages"] if m["role"] == "tool"][-1]
+    assert "被约束" in tool_message["content"]
+    assert "C9" in tool_message["content"]
+    assert "请求没有发给 MCP server" in tool_message["content"]
