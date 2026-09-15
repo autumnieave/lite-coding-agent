@@ -15,7 +15,7 @@
 | 上下文压缩 | 有（5 级流水线 → 4 层，阈值与估算） | `docs/07-context.md` | ADR-010 |
 | 项目记忆（读 AGENTS.md） | **部分**：Claude Code 里对应 CLAUDE.md 机制，不是它的 memory 系统 | `docs/07-context.md` / `docs/08-memory.md` | ADR-014 |
 | 会话 checkpoint | 有（JSONL 追加写、崩溃安全） | `docs/04-cli-session.md` | ADR-015 |
-| **关键约束保留** | **无：纯自研**，Claude Code 与参考项目都没有 | — | ADR-004 / ADR-012 |
+| **关键约束保留** | **无：纯自研**，Claude Code 与参考项目都没有 | — | ADR-004 / ADR-012 / ADR-016 |
 
 无对照的部分还有：项目脚手架、打包、`ruff` / CI / pre-commit 之类的工程约定——常规工程实践，没有对照对象。
 
@@ -319,3 +319,34 @@
 **一处已知限制**：写日志发生在**每轮任务结束时**，所以 `reset` 之前的中间轮次不进日志；被 kill 的那一轮本身不留痕（下一轮从上一个完整状态继续）。这是 checkpoint 语义，不是崩溃点恢复。
 
 **测试**：`tests/test_session.py` 26 条（含 3 条 `reset` 回放语义）+ `tests/test_cli.py` 6 条接线用例（含写日志失败不影响退出码）。
+
+## ADR-016：约束同时注入 system prompt，短任务也能看到【纯自研的延伸】
+
+**背景**：约束通道（ADR-012）此前只在 Tier 4 压缩时把清单交给摘要器，系统提示词里没有。Day 6 接线时实跑暴露了后果：`AGENTS.md` 的约束确实进了 `constraints.json`（verbose 打出 `AGENTS.md 约束：新增 5 条`），但**短任务不触发压缩，模型整轮都没看到 C1**。等于「登记了、没生效」。
+
+**决策**：加第二条注入路径，与压缩通道并行。
+- `AgentLoop` 接受 `constraints: ConstraintStore | None`；每轮构建消息时重建 system prompt：基础 prompt + `SYSTEM_PROMPT_HEADING` + 逐条清单。
+- 多轮接力时**按当前约束重建**历史第一条 system message，而不是沿用旧的——否则 `AGENTS.md` 的改动要晚一轮才生效。
+- 压缩时的摘要 Prompt 照旧再保留一次（ADR-012）。两条路都丢，约束才会真丢。
+- `constraints=None` 或存储为空时，prompt 逐字不变，老行为不受影响。
+
+**理由**：
+- 两条通道解决的是两个不同时刻的问题：system prompt 解决「**这一轮模型看得见吗**」，摘要通道解决「**历史被压缩后还在吗**」。只留后者就会出现上面那个空档。
+- 每轮重建而不是首轮注入一次：约束可能来自 `AGENTS.md` 的一次编辑，也可能来自上一轮的用户声明。重建是唯一能让「改了文件下一轮就生效」成立的写法。
+- 重建 `carried[0]` 依赖一条不变式：**历史第一条永远是基础 system prompt**。`compose_summary` 把摘要排在 head 之后，所以摘要不会落到第 0 位；代码里另加了一道 `SUMMARY_PREFIX` 检查兜底（`_is_base_prompt`），免得将来顺序变了把摘要覆盖掉。
+- 重复注入是刻意的：代价是每轮多几十 token，买到的是「约束不会因为某一层失效而消失」。
+
+**三层对照——本机制为纯自研，两侧都没有直接对照**
+
+**Claude Code 原始设计**：没有独立的「约束存储」。项目规则走 `CLAUDE.md`，按目录层级加载后进 system prompt；长会话靠 Autocompact 的 9 段摘要模板保证「不丢内容」，压缩前后没有校验环节（`claude-code-from-scratch/docs/07-context.md` 第 670 / 688 行）。
+**参考项目复现**：`build_memory_prompt_section()`（`memory.py:343`）把记忆清单注入 system prompt，但注入的是**按需召回的记忆**，不是「必须一直遵守的约束」；`docs/08-memory.md` 里没有约束这个概念。
+**本实现差异**：两侧都只有一条路径（prompt 或摘要），我们是**两条并行**——system prompt 保证「当下可见」，压缩通道保证「压完还在」，压缩后校验再保证「丢了能补回来」。这是自研机制（ADR-012）的延伸，没有可对照的原始设计。
+
+**结果**：`tests/test_loop.py` 新增 5 条（注入 / 空存储不变 / 无存储不变 / 每轮重建 / 多轮不堆积），`tests/test_cli.py` 新增 2 条（`AGENTS.md` → system prompt 的端到端、用户声明的约束下一轮带上）。
+
+实跑验证（scratch 工作区，`AGENTS.md` 里放一条可肉眼判定的约束「最后一行必须单独是 `[C1-OK]`」）：
+
+1. 第一次运行（短任务、`压缩统计：未触发压缩`）→ 回答末行是 `[C1-OK]`。**约束在没有压缩的情况下生效了**。
+2. 把 `C1` 改成 `[C1-CHANGED]`，新进程再跑一次 → verbose 打出 `AGENTS.md 约束：新增 0 条，按文件刷新 1 条`，回答末行变成 `[C1-CHANGED]`。改动立刻生效。
+
+**已知边界**：用户在同一轮消息里声明的约束（`[CONSTRAINT] 代号 X：...`）**当轮不会进 system prompt**——吸收发生在 `Compactor.compact()` 里，而 prompt 在它之前就拼好了。不过那条约束本来就在用户消息里，模型当轮看得到，下一轮起随 prompt 带上。

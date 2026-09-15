@@ -292,6 +292,7 @@ def run_chat(args: argparse.Namespace) -> int:
         on_event=reporter,
         on_text=printer,
         compactor=compactor,
+        constraints=store,
     )
 
     try:

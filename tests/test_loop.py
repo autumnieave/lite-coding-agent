@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from agent.core.constraints import SOURCE_USER, Constraint, ConstraintStore
 from agent.core.llm import BaseProvider, LLMError, LLMResponse, ToolCall
 from agent.core.loop import (
     COMPLETED,
@@ -411,11 +412,92 @@ async def test_history_without_system_message_gets_one_prepended() -> None:
 
 
 async def test_carried_history_keeps_the_injected_summary() -> None:
-    """注入的摘要也是 system message，多轮接力时不能把它丢掉。"""
+    """注入的摘要也是 system message，多轮接力时不能把它丢掉。
+
+    基础 prompt 每轮重建、排在摘要前面；摘要本身原样跟着走。
+    """
     summary = {"role": "system", "content": "[历史对话摘要]\n要点"}
     provider = _ScriptedProvider([LLMResponse(content="ok")])
-    await AgentLoop(provider, _FakeTools()).run("任务", history=[summary])
+    await AgentLoop(provider, _FakeTools(), system_prompt="基础提示").run("任务", history=[summary])
 
     sent = provider.calls[0]["messages"]
-    assert sent[0]["content"] == "[历史对话摘要]\n要点"
+    assert sent[0]["content"] == "基础提示"
+    assert sent[1]["content"] == "[历史对话摘要]\n要点"
+    assert len([item for item in sent if item["role"] == "system"]) == 2
+
+
+# ---------- 约束注入 system prompt（ADR-016） ----------
+
+
+def _store(*items: tuple[str, str]) -> ConstraintStore:
+    store = ConstraintStore()
+    for code, content in items:
+        store.add(content, source=SOURCE_USER, constraint_id=code)
+    return store
+
+
+async def test_constraints_are_appended_to_the_system_prompt() -> None:
+    """短任务不触发压缩，约束也要出现在 system prompt 里。"""
+    provider = _ScriptedProvider([LLMResponse(content="ok")])
+    loop = AgentLoop(
+        provider,
+        _FakeTools(),
+        system_prompt="基础提示",
+        constraints=_store(("C1", "必须兼容 Python 3.11。"), ("C2", "只允许标准库。")),
+    )
+    await loop.run("短任务")
+
+    sent = provider.calls[0]["messages"]
+    assert sent[0]["role"] == "system"
+    assert sent[0]["content"].startswith("基础提示")
+    assert "- [C1] 必须兼容 Python 3.11。" in sent[0]["content"]
+    assert "- [C2] 只允许标准库。" in sent[0]["content"]
     assert len([item for item in sent if item["role"] == "system"]) == 1
+
+
+async def test_an_empty_store_leaves_the_prompt_untouched() -> None:
+    provider = _ScriptedProvider([LLMResponse(content="ok")])
+    empty = ConstraintStore()
+    loop = AgentLoop(provider, _FakeTools(), system_prompt="基础提示", constraints=empty)
+    await loop.run("任务")
+
+    assert provider.calls[0]["messages"][0]["content"] == "基础提示"
+
+
+async def test_without_a_store_the_prompt_is_unchanged() -> None:
+    provider = _ScriptedProvider([LLMResponse(content="ok")])
+    await AgentLoop(provider, _FakeTools(), system_prompt="基础提示").run("任务")
+
+    assert provider.calls[0]["messages"][0]["content"] == "基础提示"
+
+
+async def test_prompt_is_rebuilt_every_run_so_constraint_edits_take_effect() -> None:
+    """AGENTS.md 改了约束，下一轮就该看到新正文，不用等压缩。"""
+    store = _store(("C1", "改写前的正文。"))
+    provider = _ScriptedProvider([LLMResponse(content="ok"), LLMResponse(content="ok")])
+    loop = AgentLoop(provider, _FakeTools(), system_prompt="基础提示", constraints=store)
+
+    first = await loop.run("第一轮")
+    store.set(Constraint(id="C1", content="改写后的正文。", source=SOURCE_USER))
+    await loop.run("第二轮", history=first.messages)
+
+    sent = provider.calls[1]["messages"]
+    assert "改写后的正文。" in sent[0]["content"]
+    assert "改写前的正文。" not in sent[0]["content"]
+
+
+async def test_the_system_prompt_does_not_pile_up_across_turns() -> None:
+    """多轮接力后 system prompt 仍然只有一条，且内容不重复。"""
+    provider = _ScriptedProvider([LLMResponse(content="ok"), LLMResponse(content="ok")])
+    loop = AgentLoop(
+        provider, _FakeTools(), system_prompt="基础提示", constraints=_store(("C1", "约束正文。"))
+    )
+
+    first = await loop.run("第一轮")
+    await loop.run("第二轮", history=first.messages)
+
+    sent = provider.calls[1]["messages"]
+    systems = [item for item in sent if item["role"] == "system"]
+    assert len(systems) == 1
+    assert systems[0]["content"].count("基础提示") == 1
+    assert systems[0]["content"].count("约束正文。") == 1

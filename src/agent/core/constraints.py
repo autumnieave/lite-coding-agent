@@ -43,6 +43,13 @@ CONSTRAINT_MARKER = "[CONSTRAINT]"
 
 DEFAULT_FILENAME = "constraints.json"
 
+SYSTEM_PROMPT_HEADING = (
+    "# 必须遵守的约束\n"
+    "以下条目来自项目规则（AGENTS.md）与用户显式声明，任何时候都不得违反；"
+    "动手之前先对照检查一遍。"
+)
+"""注入 system prompt 时用的标题，与压缩摘要里的清单区分开（那是给摘要器的）。"""
+
 # 分隔符一律用「水平空白」：`\s` 会把换行也吃掉，于是「[CONSTRAINT] 代号 B2：」
 # 这种内容为空的行会顺手吞掉下一行，凭空多出一条约束。
 _DECLARATION = re.compile(

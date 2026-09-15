@@ -671,3 +671,37 @@ def _result(messages: list[dict[str, Any]], *, turns: int = 1) -> LoopResult:
         stopped_reason="completed",
         messages=tuple(messages),
     )
+
+
+def test_short_task_sees_agents_md_constraints(
+    monkeypatch: pytest.MonkeyPatch, workspace: Path
+) -> None:
+    """短任务不触发压缩，但 AGENTS.md 的约束仍然在 system prompt 里（ADR-016）。"""
+    _write_agents_md(workspace, "- **C1**：必须兼容 Python 3.11。")
+    provider = _ScriptedProvider([LLMResponse(content="好")])
+    _use_provider(monkeypatch, provider)
+
+    assert cli.main(["chat", "短任务", "--root", str(workspace)]) == cli.EXIT_OK
+
+    systems = [item for item in provider.calls[0]["messages"] if item["role"] == "system"]
+    assert len(systems) == 1
+    assert "- [C1] 必须兼容 Python 3.11。" in systems[0]["content"]
+
+
+def test_declared_constraint_persists_into_the_next_turn(
+    monkeypatch: pytest.MonkeyPatch, workspace: Path
+) -> None:
+    """第一轮声明的约束由压缩环节吸收，第二轮随 system prompt 一起带上。
+
+    第一轮拿不到是有意的：吸收发生在 `Compactor.compact()` 里、而 system prompt 在它之前
+    就拼好了；不过那条约束本来就在用户消息里，模型当轮看得到。
+    """
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="好")]))
+    cli.main(["chat", "[CONSTRAINT] 代号 R3MJUD：输出必须是 JSON", "--root", str(workspace)])
+
+    second = _ScriptedProvider([LLMResponse(content="好")])
+    _use_provider(monkeypatch, second)
+    assert cli.main(["chat", "继续", "--root", str(workspace)]) == cli.EXIT_OK
+
+    systems = [item for item in second.calls[0]["messages"] if item["role"] == "system"]
+    assert "- [R3MJUD] 输出必须是 JSON" in systems[0]["content"]
