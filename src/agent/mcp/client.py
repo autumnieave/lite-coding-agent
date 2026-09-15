@@ -187,6 +187,12 @@ class McpConnection:
             await asyncio.to_thread(_kill_process_tree, process.pid)
         with contextlib.suppress(TimeoutError, ProcessLookupError):
             await asyncio.wait_for(process.wait(), timeout=KILL_GRACE_SECONDS)
+        # taskkill 绕过了 asyncio 自己的 kill()，管道 transport 不会自动回收；不显式关掉，
+        # 解释器退出时会报 "unclosed transport"（Windows Proactor 上尤其吵）。
+        transport = getattr(process, "_transport", None)
+        if transport is not None:
+            with contextlib.suppress(Exception):
+                transport.close()
 
     # ---------- JSON-RPC ----------
 
