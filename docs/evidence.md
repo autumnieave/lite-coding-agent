@@ -12,6 +12,7 @@
 | Day 4 结束 | 357 | 约 9s | 新增 `constraints` 34 / 约束保留自愈 19 / cli 约束接线 3 |
 | Day 5 结束 | 417 | 约 10s | 新增 `memory/agents_md` 23 / `memory/session` 23 / Tier 4 抖动与摘要替换 14 |
 | Day 6 结束 | 444 | 约 11s | 新增 `memory/agents_md` 26 / `memory/session` 26 / 抖动 14 / 自愈专项 10 / CLI 接线 10 |
+| Day 6 收尾 | 451 | 约 12s | 新增 `loop` 约束注入 5 / `cli` 短任务约束 2（ADR-016） |
 
 耗时从 31.5s 降到约 6s 的原因见 ADR-009：超时用例原先要等满子进程的睡眠时长。Day 3 之后回升到约 11s，是新增的 66 个压缩用例本身的开销，不是回归。
 
@@ -198,10 +199,23 @@ $ lite-agent chat "用一句话说明这个仓库是做什么的" --verbose
 
 C1 正文更新、`created_at` 保留。**接线时发现的缺口**：`register_constraints` 原本对已存在的同 ID 一律跳过，于是「改 AGENTS.md 让约束生效」根本做不到——旧正文会把新正文永远挡在外面。已改为「AGENTS.md 对它自己的 ID 是唯一真源」，同 ID 被 `user` / `agent` 来源占用时仍然跳过（ADR-014）。
 
-**（2）最后一公里的长度（重要）**
+**（2）最后一公里：从「登记了」到「这一轮就生效」（Day 6 收尾已修）**
 
-约束**只在 Tier 4 压缩时**进入模型上下文（摘要请求里的约束清单 + 补录块），系统提示词里没有。所以短任务不触发压缩时，模型看不到 AGENTS.md 的约束。上面那次实跑就是这种情况：约束进了存储，但没有进这一轮的对话。这条路径由 `tests/test_constraint_retention.py` 的
-`test_agents_md_constraints_reach_the_tier4_summary_prompt` 离线钉住（AGENTS.md → 存储 → 摘要请求里出现 `- [C1] ...`）。
+这里一开始暴露了一个真缺口：约束**只在 Tier 4 压缩时**进入模型上下文（摘要请求里的约束清单 + 补录块），**system prompt 里没有**。所以短任务不触发压缩时，模型看不到 AGENTS.md 的约束。上面那次实跑就是这种情况：约束进了存储（verbose 打出 `新增 5 条`），但没有进这一轮的对话。等于「登记了、没生效」。
+
+修法是加第二条并行通道（ADR-016）：`AgentLoop` 每轮重建 system prompt，把约束清单追加在基础 prompt 之后；多轮接力时按当前约束**重建**历史里的第一条 system message，于是编辑 `AGENTS.md` 下一轮就生效（不用等到压缩）。
+
+在独立 scratch 工作区实跑验证（`AGENTS.md` 里放一条肉眼可判定的约束「最后一行必须单独是 `[C1-OK]`」）：
+
+| 步骤 | 动作 | 结果 |
+|---|---|---|
+| 1 | `chat "用一句话说明这个仓库是做什么的" --verbose` | verbose：`AGENTS.md 约束：新增 1 条`、`压缩统计：未触发压缩`；回答**末行是 `[C1-OK]`** |
+| 2 | 把 C1 正文改成 `[C1-CHANGED]`，新进程再跑一次 | verbose：`新增 0 条，按文件刷新 1 条`；回答末行变成 `[C1-CHANGED]`，`.lite-agent/constraints.json` 里 `created_at` 保留 |
+
+第 1 步是关键：**整轮没有触发任何压缩**，约束照样生效。压缩通道由 `tests/test_constraint_retention.py` 的
+`test_agents_md_constraints_reach_the_tier4_summary_prompt` 离线钉住（AGENTS.md → 存储 → 摘要请求里出现 `- [C1] ...`）；system prompt 通道由 `tests/test_loop.py` 5 条 + `tests/test_cli.py` 2 条钉住。
+
+**已知边界**：用户在同一轮消息里声明的约束（`[CONSTRAINT] 代号 X：...`）当轮不会进 system prompt——吸收发生在 `Compactor.compact()` 里，而 prompt 在它之前就拼好了。不过那条约束本来就在用户消息里，模型当轮看得到，下一轮起随 prompt 带上。
 
 **（3）session checkpoint 跨进程恢复**
 
@@ -232,7 +246,9 @@ C1 正文更新、`created_at` 保留。**接线时发现的缺口**：`register
 
 ## 待补
 
+> **本轮已修（Day 6 收尾）**：约束注入路径。此前约束只在 Tier 4 压缩时进上下文，短任务看不到 `AGENTS.md` 的约束；现已加 system prompt 通道（ADR-016），实跑验证见用例七（2）。
+
 - **Tier 4 抖动的残余**：修复后两次复跑分别是均值 5.3 / 最大 7、均值 5.4 / 最大 6，仍未达 ≤5 的原定验收线（口径见用例五与用例六）。候选方向：把压缩后目标水位从 0.60 再压低、或对刚压过的历史加冷却窗口。
-- **约束来源的端到端覆盖**：`agents_md` 已接线到 CLI 并实跑验证（用例七），但**对比实验脚本仍只走「用户声明」这一条路径**，`source=agents_md` 没有进过实验数据；`agent`（自行识别）连单测都还没有。
+- **约束来源的端到端覆盖**：`agents_md` 已接线到 CLI，且**两条注入通道都实跑验证过**（用例七（2））；但**对比实验脚本仍只走「用户声明」这一条路径**，`source=agents_md` 没有进过实验数据；`agent`（自行识别）连单测都还没有。
 - **空摘要会让 Tier 4 空转**：模型返回空字符串时整层跳过（不注入、不补录，见 `tests/test_constraint_self_healing.py`），但下一轮还会再触发一次——等于白花一次模型调用。两次复跑里没观察到（Tier 4 均值 4.6~5.4），属于「知道有这条路、还没被触发」，需要在「Tier 4 抖动的残余」一起解决。
 - **行为探针覆盖面**：15 / 40 条约束里只有 3 条有输出层检查（JSON / snake_case / 无围栏），其余只统计是否还在上下文里。两次复跑合起来 on / off 的违反次数是 5 vs 19，差异主要来自对照组「整段丢 40 条」，不是逐条渐进差异；要证明「记得就会遵守」，得把更多约束做成可判定规则。
