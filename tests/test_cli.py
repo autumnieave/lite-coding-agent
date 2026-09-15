@@ -11,7 +11,20 @@ from typing import Any
 import pytest
 
 from agent.cli import main as cli
-from agent.core.llm import BaseProvider, LLMError, LLMResponse, ToolCall
+from agent.cli.main import _persist_session
+from agent.core.compaction import TIER1, CompactionEvent, Compactor
+from agent.core.constraints import ConstraintStore
+from agent.core.llm import (
+    BaseProvider,
+    LLMError,
+    LLMResponse,
+    ToolCall,
+    assistant_message,
+    system_message,
+    user_message,
+)
+from agent.core.loop import LoopResult
+from agent.memory.session import SessionState, SessionStore
 
 
 class _ScriptedProvider(BaseProvider):
@@ -429,13 +442,14 @@ def test_declared_constraints_are_persisted(
     assert [item["id"] for item in saved["constraints"]] == ["R3MJUD"]
 
 
-def test_state_dir_stays_clean_when_nothing_is_declared(
+def test_no_constraints_file_when_nothing_is_declared(
     monkeypatch: pytest.MonkeyPatch, workspace: Path
 ) -> None:
+    """没有约束来源时不该造出 constraints.json（会话日志另算，它每轮都有）。"""
     _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="答案")]))
 
     assert cli.main(["chat", "普通问题", "--root", str(workspace)]) == cli.EXIT_OK
-    assert not (workspace / cli.CONSTRAINTS_DIR).exists()
+    assert not _state_file(workspace).exists()
 
 
 # ---------- AGENTS.md 接线 ----------
@@ -503,3 +517,157 @@ def test_workspace_without_agents_md_registers_nothing(
 
     assert code == cli.EXIT_OK
     assert "AGENTS.md 约束" not in capsys.readouterr().err
+
+
+# ---------- session checkpoint 接线 ----------
+
+
+def _session_path(workspace: Path) -> Path:
+    return workspace / cli.CONSTRAINTS_DIR / "session.jsonl"
+
+
+def _records(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def test_session_log_is_written_after_a_run(
+    monkeypatch: pytest.MonkeyPatch, workspace: Path
+) -> None:
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="答案")]))
+
+    assert cli.main(["chat", "问题", "--root", str(workspace)]) == cli.EXIT_OK
+
+    records = _records(_session_path(workspace))
+    kinds = [item["type"] for item in records]
+    assert kinds[0] == "reset"  # 全新会话：先划一条起跑线
+    assert kinds[-1] == "state"
+    assert "message" in kinds
+    assert records[-1]["turns"] == 1
+    assert records[-1]["tokens"] > 0
+
+
+def test_second_run_resumes_the_previous_session(
+    monkeypatch: pytest.MonkeyPatch, workspace: Path
+) -> None:
+    """第二次运行必须带着上一轮的消息历史去问模型。"""
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="第一轮答案")]))
+    assert cli.main(["chat", "第一轮问题", "--root", str(workspace)]) == cli.EXIT_OK
+
+    second = _ScriptedProvider([LLMResponse(content="第二轮答案")])
+    _use_provider(monkeypatch, second)
+    assert cli.main(["chat", "第二轮问题", "--root", str(workspace)]) == cli.EXIT_OK
+
+    sent = [str(item.get("content")) for item in second.calls[0]["messages"]]
+    assert "第一轮问题" in sent
+    assert "第一轮答案" in sent
+    assert "第二轮问题" in sent
+    assert sent.count("第二轮问题") == 1
+
+
+def test_verbose_reports_the_restored_session(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], workspace: Path
+) -> None:
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="答案")]))
+    cli.main(["chat", "第一轮", "--root", str(workspace)])
+    capsys.readouterr()
+
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="答案")]))
+    cli.main(["chat", "第二轮", "--root", str(workspace), "--verbose"])
+
+    assert "已恢复会话" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_persist_session_appends_only_the_new_tail(tmp_path: Path) -> None:
+    """没触发压缩时只追加新增的尾巴，日志保持纯追加。"""
+    session = SessionStore(tmp_path / "session.jsonl")
+    carried = [system_message("系统"), user_message("第一轮"), assistant_message("第一轮答案")]
+    session.append_messages(carried)
+    before = _records(session.path)  # type: ignore[arg-type]
+
+    fresh = [*carried, user_message("第二轮"), assistant_message("第二轮答案")]
+    _persist_session(
+        session,
+        SessionState(messages=tuple(carried)),
+        _result(fresh, turns=2),
+        Compactor(summarize=_noop_summary),
+        ConstraintStore(),
+    )
+
+    records = _records(session.path)  # type: ignore[arg-type]
+    assert records[: len(before)] == before  # 追加，不改写
+    assert [item["type"] for item in records[len(before) :]] == ["message", "message", "state"]
+    assert [item["content"] for item in session.load().messages][-2:] == [
+        "第二轮",
+        "第二轮答案",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_persist_session_resets_when_compaction_fired(tmp_path: Path) -> None:
+    """压缩改写上下文后必须追一条 reset，否则回放会「原文 + 摘要」两份都在。"""
+    session = SessionStore(tmp_path / "session.jsonl")
+    carried = [system_message("系统"), user_message("很久以前的问题")]
+    session.append_messages(carried)
+
+    compactor = Compactor(summarize=_noop_summary)
+    compactor.stats.add(
+        CompactionEvent(tier=TIER1, tokens_before=100, tokens_after=10, duration_ms=0.1)
+    )
+    compacted = [system_message("系统"), user_message("压缩后的问题")]
+    _persist_session(
+        session,
+        SessionState(messages=tuple(carried)),
+        _result(compacted),
+        compactor,
+        ConstraintStore(),
+    )
+
+    kinds = [item["type"] for item in _records(session.path)]  # type: ignore[arg-type]
+    assert kinds == ["message", "message", "reset", "message", "message", "state"]
+    replayed = [item["content"] for item in session.load().messages]
+    assert replayed == ["系统", "压缩后的问题"]
+
+
+def test_session_write_failure_does_not_break_the_task(
+    monkeypatch: pytest.MonkeyPatch, workspace: Path
+) -> None:
+    """写日志失败（磁盘满、只读目录）只是「这次没存上」，不能影响退出码。"""
+    _use_provider(monkeypatch, _ScriptedProvider([LLMResponse(content="答案")]))
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise OSError("磁盘满了")
+
+    monkeypatch.setattr(cli, "SessionStore", lambda *a, **k: _ExplodingSession())
+
+    assert cli.main(["chat", "问题", "--root", str(workspace)]) == cli.EXIT_OK
+
+
+class _ExplodingSession(SessionStore):
+    def __init__(self) -> None:
+        super().__init__(None)
+
+    def load(self) -> SessionState:
+        return SessionState()
+
+    def append_reset(self) -> None:
+        raise OSError("磁盘满了")
+
+    def append_messages(self, messages: object) -> None:
+        raise OSError("磁盘满了")
+
+    def append_state(self, **kwargs: object) -> None:
+        raise OSError("磁盘满了")
+
+
+async def _noop_summary(messages: object) -> str:
+    return "摘要"
+
+
+def _result(messages: list[dict[str, Any]], *, turns: int = 1) -> LoopResult:
+    return LoopResult(
+        content="答案",
+        turns=turns,
+        stopped_reason="completed",
+        messages=tuple(messages),
+    )

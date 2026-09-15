@@ -228,3 +228,45 @@ def test_load_applies_the_trim_to_a_killed_turn(tmp_path: Path) -> None:
     store = _store(path)
     store.append_messages([system_message("系统提示"), user_message("任务"), _call("c1")])
     assert [item["role"] for item in store.load().messages] == ["system", "user"]
+
+
+# ---------- reset 标记 ----------
+
+
+def test_append_reset_discards_everything_before_it(tmp_path: Path) -> None:
+    """压缩改写上下文后追加 reset：回放只认最后一条 reset 之后的内容。"""
+    store = SessionStore(tmp_path / "session.jsonl")
+    store.append_message(user_message("旧的一轮"))
+    store.append_message(user_message("旧的补充"))
+    store.append_state(turns=3, tokens=999)
+
+    store.append_reset()
+    store.append_message(user_message("压缩后的一轮"))
+
+    state = store.load()
+    assert [item["content"] for item in state.messages] == ["压缩后的一轮"]
+    assert state.turns == 0
+    assert state.tokens == 0
+
+
+def test_append_reset_keeps_the_file_append_only(tmp_path: Path) -> None:
+    path = tmp_path / "session.jsonl"
+    store = SessionStore(path)
+    store.append_message(user_message("一"))
+    before = path.read_text(encoding="utf-8")
+
+    store.append_reset()
+
+    assert path.read_text(encoding="utf-8").startswith(before)
+
+
+def test_append_reset_after_state_keeps_later_state(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "session.jsonl")
+    store.append_state(turns=1, tokens=10)
+    store.append_reset()
+    store.append_message(user_message("新"))
+    store.append_state(turns=2, tokens=20)
+
+    state = store.load()
+    assert state.turns == 2
+    assert state.tokens == 20
