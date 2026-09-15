@@ -364,6 +364,24 @@ def aggregate(records: Sequence[Mapping[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def load_records(path: Path, profile: str) -> list[dict[str, Any]]:
+    """读回已经落盘的逐次记录，只保留当前档位的，坏行跳过。"""
+    if not path.is_file():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(item, dict) and item.get("profile", "standard") == profile:
+            records.append(item)
+    return records
+
+
 def self_test() -> int:
     """不联网地验证判定逻辑本身。"""
     good = '{"constraint_codes": ["AB12CD"], "file_count": 12}'
@@ -427,15 +445,26 @@ async def main_async(args: argparse.Namespace) -> int:
     provider = OpenAICompatProvider.from_env()
 
     profile = PROFILES[args.profile]
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 续跑：种子由 (profile, run_id) 决定，同一对必然复现同一次会话，
+    # 所以「已落盘的 (group, run_id)」就是可以安全跳过的集合。
+    prior = load_records(out_path, profile.name) if args.resume else []
+    done = {(str(item.get("group")), int(item.get("run_id", 0))) for item in prior}
+    if done:
+        print(f"[resume] 已有 {len(done)} 次记录，跳过：{sorted(done)}", flush=True)
+
     jobs = [
         (run_id, group, args.seed + run_id * 1000 + offset)
         for offset, group in enumerate(args.groups)
         for run_id in range(1, args.runs + 1)
+        if (group, run_id) not in done
     ]
+    if not jobs:
+        print("[resume] 没有待跑的会话，直接汇总。", flush=True)
     semaphore = asyncio.Semaphore(args.concurrency)
-    out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    records: list[dict[str, Any]] = []
+    records: list[dict[str, Any]] = list(prior)
 
     async def worker(run_id: int, group: str, seed: int) -> dict[str, Any]:
         async with semaphore:
@@ -449,7 +478,7 @@ async def main_async(args: argparse.Namespace) -> int:
             )
 
     try:
-        for coro in asyncio.as_completed([worker(*job) for job in jobs]):
+        for coro in asyncio.as_completed([worker(*job) for job in jobs]) if jobs else ():
             record = await coro
             records.append(record)
             with out_path.open("a", encoding="utf-8") as handle:
@@ -484,6 +513,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--concurrency", type=int, default=4, help="并发会话数")
     parser.add_argument("--max-turns", type=int, default=4, help="单次任务的 LLM 轮数上限")
     parser.add_argument("--out", default=str(DEFAULT_OUT), help="逐次记录写入的 JSONL 路径")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="跳过 --out 里已经落盘的 (group, run_id)，只补跑缺的那些；汇总含旧记录",
+    )
     parser.add_argument("--self-test", action="store_true", help="只跑判定逻辑自检，不联网")
     return parser
 
