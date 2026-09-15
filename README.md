@@ -89,7 +89,7 @@ lite-agent chat "列出当前目录" --verbose      # 同上，打印每次工�
 ```
 
 > 输出分流：**stdout 只放模型的最终答案**，工具进度默认就实时上报到 **stderr**（`· ` 前缀；`--verbose` 换成 `[verbose] ` 并带完整参数与结果）。因此 `lite-agent chat "..." > answer.txt` 拿到的始终是干净答案。
-> 当前进度：Agent Loop + 6 个工具 + 流式输出 + 四层上下文压缩 + 关键约束保留已完成，记忆系统开发中；交互式 REPL 见「路线图」。
+> 当前进度：Agent Loop + 6 个工具 + 流式输出 + 四层上下文压缩 + 关键约束保留已完成；记忆系统开发中（`memory/agents_md.py` 与 `memory/session.py` 已落地并有单测，**尚未接入 loop / CLI**）；交互式 REPL 见「路线图」。
 > 退出码：0 成功 / 1 任务失败（含达到轮数上限）/ 2 配置或用参错误。
 
 ## 项目结构

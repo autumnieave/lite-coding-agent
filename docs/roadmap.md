@@ -133,15 +133,25 @@
 
 **目标**：简历级完成，GitHub 可展示。
 
-| 任务 | 预计耗时 | 验收 |
-|---|---|---|
-| `memory/agents_md.py` AGENTS.md 加载 | 1.5h | 按目录层级查找 |
-| `memory/session.py` checkpoint | 1.5h | `session.jsonl`，kill 后可恢复 |
-| 单测（核心模块） | 2h | loop/context/constraints 覆盖 |
-| README 架构图 | — | ✅ 已完成（Mermaid 模块图 + Agent Loop 数据流） |
-| README 评测数据 | 1.5h | 待 Day 4 实验产出后填入真实数字 |
-| 演示 GIF | 1h | 30 秒终端交互 |
-| commit 历史整理 | 0.5h | 每天多个 commit |
+| 任务 | 预计耗时 | 验收 | 状态 |
+|---|---|---|---|
+| Tier 4 触发过频（动态保留阶梯） | 1.5h | 压力档 25 轮 Tier 4 触发 ≤ 5 次 | ✅ |
+| `compose_summary` 摘要叠加 | 1h | 连压 10 次只剩 1 条摘要消息 | ✅ |
+| `memory/agents_md.py` AGENTS.md 加载 | 1.5h | 按目录层级查找，C1–C5 标 `source=agents_md` | ✅ 模块完成（**未接入 `Compactor`**） |
+| `memory/session.py` checkpoint | 1.5h | `session.jsonl`，kill 后可恢复 | ✅ 模块完成（**未接入 loop / CLI**） |
+| 单测（核心模块） | 2h | loop/context/constraints 覆盖 | ✅ 357 → 417 |
+| README 架构图 | — | ✅ 已完成（Mermaid 模块图 + Agent Loop 数据流） | ✅ |
+| README 评测数据 | 1.5h | 待 Day 4 实验产出后填入真实数字 | ✅ 见 `docs/evidence.md` 用例五/六 |
+| 演示 GIF | 1h | 30 秒终端交互 | 📋 顺延 Day 6 |
+| commit 历史整理 | 0.5h | 每天多个 commit | ✅ |
+
+**验收（全部通过）**：
+
+- [x] Tier 4 触发过频：`CompactionConfig.retain_ladder = (10, 5, 3, 1)`，压缩后按阶梯收窄保留窗口，直到降到触发线（`DEFAULT_COMPACT_THRESHOLD = 0.60`）以下。离线探针 25 轮会话在 600 / 3000 / 8000 / 15000 / 30000 字符假摘要下 Tier 4 均为 **3 次**，修复前为 3 / 5 / 10 / 11 / 11 次
+- [x] 摘要不再叠加：`compose_summary` 的 `head` 过滤掉历史摘要消息（旧摘要仍作为输入喂给摘要器）；连压 3 次、10 次摘要消息数恒为 1（`tests/test_compaction_thrash.py`）
+- [x] `memory/agents_md.py`：从 cwd 向上遍历目录层级收集 AGENTS.md，解析「关键约束」下的 C1–C5，落成 `source=agents_md` 的约束；单测 23 条覆盖多层目录、缺失文件、格式异常
+- [x] `memory/session.py`：`session.jsonl` 逐轮追加，回放得到消息历史 / 轮数 / token 数 / 约束状态；尾部未配对的工具交换会被裁掉；单测 23 条
+- [x] 全量 **417** 个单测通过（Day 4 收尾时 357），`ruff check .` 与 `ruff format --check .` 干净
 
 **可演示**：GitHub README 完整，CI 绿，评测数据填入。
 **卡点**：时间不够 → 测试优先级 > 文档 > GIF。
@@ -205,7 +215,7 @@
 - [x] **M2**：6 个工具可用，流式输出（Day 2 结束，212 个单测通过）
 - [x] **M3**：4 层压缩能触发，长会话不崩（Day 3 结束，301 个单测通过，20 轮真实会话验证见 `docs/evidence.md`）
 - [x] **M4**：约束保留机制有对比数据（Day 4 结束，357 个单测通过；压力档约束原文逐字保留 100% vs 93.0%，实验组 6/10 次遇到摘要整段丢 40 条、累计补录 280 条，见 `docs/evidence.md` 用例五）
-- [ ] **M5**：简历级完成，GitHub 完整（Day 5 结束）
+- [x] **M5**：简历级完成，GitHub 完整（Day 5 结束，417 个单测通过；四层压缩两处技术债已修，`memory/agents_md.py` 与 `memory/session.py` 落地但尚未接入主流程，见 `docs/evidence.md` 用例六）
 - [ ] **M6**：前 5 天验收全打勾，实验扩大到 20 用例（Day 6 结束）
 - [ ] **M7**：MCP 或子 Agent 完成（Day 7 结束，选做）
 
