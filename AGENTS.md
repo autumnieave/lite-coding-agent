@@ -29,7 +29,7 @@
 
 - 不引入 **LangChain / LlamaIndex** 等 agent 框架，主循环必须自研（见 `docs/decisions.md` ADR-001）。
 - 不提交任何 **密钥、Token、`.env` 文件**；密钥只从环境变量读取。
-- 不直接 `git push` 到 **main**，一律 feature 分支 + PR。
+- 不直接 `git push` 到 **main**（个人项目阶段例外，见 C5）；多人协作时一律 feature 分支 + PR。
 - **`core` 不得依赖 `tools`**，工具通过注册表在 `cli` 层注入。
 - 不为了让测试通过而放宽断言或删测试。
 - 不在代码里写死模型名、上下文窗口大小、压缩阈值等可配置项。
