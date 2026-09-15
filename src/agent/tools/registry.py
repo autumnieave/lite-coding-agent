@@ -2,24 +2,27 @@
 
 本模块刻意不依赖 `core`，工具层通过名称与原始 JSON 字符串接收调用，
 与 LLM 的消息结构解耦。
+
+注册的对象只需满足 `ToolLike`（`spec()` + `run()`），因此 MCP 这类外部工具
+不必继承 `Tool`、也不必提供 Pydantic 参数模型就能接进来（见 ADR-017）。
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
-from agent.tools.base import Tool, ToolResult
+from agent.tools.base import ToolLike, ToolResult
 
 
 class ToolRegistry:
     """工具集合。名称唯一，按名称分发执行。"""
 
-    def __init__(self, tools: Iterable[Tool] = ()) -> None:
-        self._tools: dict[str, Tool] = {}
+    def __init__(self, tools: Iterable[ToolLike] = ()) -> None:
+        self._tools: dict[str, ToolLike] = {}
         for tool in tools:
             self.register(tool)
 
-    def register(self, tool: Tool) -> None:
+    def register(self, tool: ToolLike) -> None:
         name = getattr(tool, "name", "")
         if not name:
             raise ValueError(f"工具必须有非空 name：{type(tool).__name__}")
@@ -31,7 +34,7 @@ class ToolRegistry:
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._tools))
 
-    def get(self, name: str) -> Tool | None:
+    def get(self, name: str) -> ToolLike | None:
         return self._tools.get(name)
 
     def specs(self) -> list[dict]:
