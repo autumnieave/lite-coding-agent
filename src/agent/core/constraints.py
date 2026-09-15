@@ -215,6 +215,16 @@ class ConstraintStore:
         self._items[cid] = item
         return item
 
+    def set(self, item: Constraint) -> Constraint:
+        """按 id 直接写入，已存在则整条覆盖。返回写入的条目。
+
+        与 `add()` 不同：这里不做幂等或冲突判断，调用方已经知道要什么。
+        只用于「外部文件是唯一真源」的场景——`AGENTS.md` 的 C1–C5 改了就得以文件为准，
+        否则库里的旧正文会把新正文永远挡在外面（见 `memory/agents_md.py`）。
+        """
+        self._items[item.id] = item
+        return item
+
     def absorb(self, messages: Iterable[Any], *, source: str = SOURCE_USER) -> list[Constraint]:
         """扫描消息，把其中的 `[CONSTRAINT]` 声明收进来。返回本次新增的约束。
 

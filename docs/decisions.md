@@ -273,7 +273,15 @@
 **参考项目复现**：四分类照搬。`frontmatter.py` 解析元数据，`save_memory()`（`memory.py:95`）落盘，`load_memory_index()`（`memory.py:124`）做索引截断，`build_memory_prompt_section()`（`memory.py:343`）注入 system prompt，`start_memory_prefetch()`（`memory.py:301`）异步预取，`memory_freshness_warning()`（`memory.py:207`）做过期标注。对比总览在 `docs/08-memory.md` 第 688-696 行。
 **本实现差异**：**没有做跨会话记忆库**——没有 sideQuery、没有四分类、没有索引截断、没有 freshness、没有会话预算。我们做的是 CLAUDE.md 那一侧：把 `AGENTS.md` 当**约束来源**而不是知识库，产物直接进 `ConstraintStore`（ADR-004），用途是喂给压缩环节的约束通道（ADR-012）。相对 Claude Code「CLAUDE.md 从 CWD 向上遍历目录树」这条我们与之一致；相对它的 memory 系统，我们主动放弃。
 
-**结果**：`tests/test_agents_md.py` 23 个用例覆盖多层目录、缺失文件、格式异常、重复 ID。**尚未接入 `Compactor`**——`load_constraints()` 目前没有调用方，`source=agents_md` 这条来源只有单测覆盖（见 `docs/evidence.md` 待补）。
+**结果**：Day 6 接线完成——`cli/main.py` 在装配阶段调用 `agents_md.register_constraints(store, root)`，C1–C5 进 `ConstraintStore` 并标 `source=agents_md`，随压缩环节进入模型上下文。实跑验证：仓库根目录跑 `lite-agent chat`，verbose 输出 `AGENTS.md 约束：新增 5 条`，`.lite-agent/constraints.json` 落盘 C1–C5；把 C1 正文改掉再跑一次，输出变成「新增 0 条，按文件刷新 1 条」，正文更新而 `created_at` 保留。
+
+**接线时发现并修掉的一个缺口**：`register_constraints` 原本对已存在的同 ID 一律跳过，于是「编辑 AGENTS.md 让约束生效」根本做不到——库里的旧正文会把新正文永远挡在外面。改为 **`AGENTS.md` 对它自己的 ID 是唯一真源**：同 ID 且 `source=agents_md` 时按文件改写；同 ID 被别的来源（`user` / `agent`）占用时仍然跳过。
+
+**接线位置**：加载放在 `cli` 装配层，不是 `core/loop.py`。理由同 C4——`memory` 依赖 `core`，反向依赖会成环。对使用者的观感一致：任务启动时约束已经在存储里。
+
+**一处已知限制**：约束目前只在 **Tier 4 压缩时**进入模型上下文（摘要清单 + 补录块），系统提示词里没有。所以短任务不触发压缩时，模型看不到 AGENTS.md 的约束。这是 ADR-012 的既定范围、不是接线缺陷，但要说清楚——「约束是否生效」只能在长会话里观察到。
+
+**测试**：`tests/test_agents_md.py` 26 条 + `tests/test_cli.py` 4 条接线用例 + `tests/test_constraint_retention.py` 1 条最后一公里用例（AGENTS.md → 存储 → 摘要请求，不联网）。
 
 ## ADR-015：会话 checkpoint 用 JSONL 追加写，恢复时裁掉未配对的尾部
 
