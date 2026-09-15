@@ -15,6 +15,7 @@
 | 上下文压缩 | 有（5 级流水线 → 4 层，阈值与估算） | `docs/07-context.md` | ADR-010 |
 | 项目记忆（读 AGENTS.md） | **部分**：Claude Code 里对应 CLAUDE.md 机制，不是它的 memory 系统 | `docs/07-context.md` / `docs/08-memory.md` | ADR-014 |
 | 会话 checkpoint | 有（JSONL 追加写、崩溃安全） | `docs/04-cli-session.md` | ADR-015 |
+| MCP 客户端 | 有（SDK 封装、stdio + SSE、三段式命名、15s 超时） | `docs/12-mcp.md` | ADR-017 |
 | **关键约束保留** | **无：纯自研**，Claude Code 与参考项目都没有 | — | ADR-004 / ADR-012 / ADR-016 |
 
 无对照的部分还有：项目脚手架、打包、`ruff` / CI / pre-commit 之类的工程约定——常规工程实践，没有对照对象。
@@ -350,3 +351,37 @@
 2. 把 `C1` 改成 `[C1-CHANGED]`，新进程再跑一次 → verbose 打出 `AGENTS.md 约束：新增 0 条，按文件刷新 1 条`，回答末行变成 `[C1-CHANGED]`。改动立刻生效。
 
 **已知边界**：用户在同一轮消息里声明的约束（`[CONSTRAINT] 代号 X：...`）**当轮不会进 system prompt**——吸收发生在 `Compactor.compact()` 里，而 prompt 在它之前就拼好了。不过那条约束本来就在用户消息里，模型当轮看得到，下一轮起随 prompt 带上。
+
+## ADR-017：MCP 客户端手写 JSON-RPC over stdio
+
+**背景**：MCP 是接入外部工具的标准协议，接它要做三个选择：用不用官方 SDK、支持哪些传输、发现的工具怎么融进现有注册表。参考项目 `python/mini_claude/mcp_client.py`（251 行）手写了一份不依赖 SDK 的实现，可以直接对照。
+
+**决策**：
+- **手写 JSON-RPC over stdio，不引入 MCP SDK**。子进程的 stdin / stdout 当双向通道，每行一条 JSON 消息，`pending` 字典用自增 id 把请求和响应配对。
+- 只支持 stdio，不做 SSE。
+- 工具命名沿用三段式 `mcp__<server>__<tool>`：名字里直接带路由信息，不需要额外的映射表。
+- 发现的工具包装成满足 `ToolLike` 的 `McpTool`，直接注册进现有 `ToolRegistry`；`registry` 的类型从 `Tool` 放宽到 `ToolLike` 协议。
+- server 由 CLI 参数 `--mcp-server` 指定，不做配置文件发现。
+
+**理由**：
+- **不用 SDK**：整个协议只用四个方法（`initialize` / `notifications/initialized` / `tools/list` / `tools/call`），手写约 250 行，零依赖且协议细节完全可控——面试能逐行讲。SDK 恰好会封掉我们想讲的那部分。
+- **只做 stdio**：stdio 的子进程生命周期天然绑定父进程，不需要端口管理、服务发现和心跳；SSE 是为远端服务准备的，本地开发用不上。
+- **registry 放宽到协议**：MCP 工具的参数 schema 来自远端，没法先造 Pydantic 模型；强制继承 `Tool` 就得塞一个假的 `args_model` 占位。改用一个三成员 Protocol 更诚实，也让 ADR-006「core 不依赖 tools，靠 Protocol 注入」的思路在工具层复用一次。
+- **不做配置发现**：Claude Code 要读用户级 / 项目级 `settings.json` 加 `.mcp.json`，还叠加企业策略。个人项目用显式 CLI 参数更透明，出问题不用猜配置从哪来。
+
+**三层对照**
+
+**Claude Code 原始设计**：用 `@anthropic-ai/sdk` 内置的 MCP 客户端；支持 stdio + SSE 两种传输与 OAuth 认证；工具以 `mcp__serverName__toolName` 注册；配置从用户级 / 项目级 `settings.json` 与 `.mcp.json` 三处读取，后读覆盖先读；握手与工具发现各 15 秒超时；支持运行时动态刷新工具列表；首次 chat 时懒加载连接（`docs/12-mcp.md` 第 575-591 行）。
+**参考项目复现**：手写原始 JSON-RPC，不用 SDK；只支持 stdio；三段式命名与 Claude Code 一致；配置读 `~/.claude/settings.json` + `.claude/settings.json` + `.mcp.json`，跳过格式错误项；15 秒超时后静默跳过该 server；一次性工具发现；懒加载。实现见 `python/mini_claude/mcp_client.py` 的 `McpConnection` / `McpManager`（`docs/12-mcp.md` 第 290-530 行）。
+**本实现差异**：协议层与参考项目同构（手写 stdio + 三段式 + 一次性发现 + 懒加载不需要），差异集中在四处工程细节：
+1. **请求登记时序**：参考项目 `_send_request` 先写 stdin、再登记 future，中间隔着一次 `await drain()`；响应若在 drain 期间返回，`_read_loop` 会因为 `pending` 里还没这个 id 而**直接丢弃**。本实现先登记再写，消除这个竞态。
+2. **进程终止**：参考项目 `close()` 只 `kill()` 直接子进程，server 若自己 fork 了子进程会留下孤儿；本实现复用 ADR-009 的整棵树方案（Windows `taskkill /T /F`，POSIX `killpg`），并在 POSIX 上用独立会话启动，避免误伤自己。
+3. **stderr 处理**：参考项目给 stderr 开了 `PIPE` 却全程不读，server 写满管道缓冲区就会卡住；本实现直接 `DEVNULL`。
+4. **超时收尾**：参考项目把超时包在 `asyncio.wait_for` 外面，超时后相应 future 仍留在 `pending` 里等一个永远不来的响应；本实现超时后主动摘掉。
+
+**结果**：`tests/test_mcp_client.py` 14 条，全部用真实子进程（本地假 server 脚本，不发网络请求），覆盖握手、工具发现、参数转发、server 报错、非 JSON 日志行、超时、server 中途退出、注册表接入。
+
+**已知边界**：
+- 只支持 stdio，没有 SSE / OAuth，也没有 Claude Code 的动态工具刷新。
+- 工具列表一次性发现，server 后续变更不感知。
+- 一个 server 一个子进程，不做连接复用与重试；连接失败抛 `McpError`，由调用方决定是否跳过。

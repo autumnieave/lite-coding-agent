@@ -11,7 +11,7 @@ import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Protocol
 
 from pydantic import BaseModel, ValidationError
 
@@ -101,3 +101,19 @@ class Tool(ABC):
     @abstractmethod
     async def execute(self, args: Any) -> ToolResult:
         """执行工具。失败时抛 `ToolError` 或直接返回 failure。"""
+
+
+class ToolLike(Protocol):
+    """工具的最小接口。
+
+    `ToolRegistry` 只依赖这三个成员，所以外部工具（如 MCP）不必继承 `Tool`、
+    也不必提供 Pydantic 参数模型就能注册进来——它们的参数由远端自己校验。
+    """
+
+    name: str
+
+    def spec(self) -> dict[str, Any]:
+        """返回传给模型的工具定义。"""
+
+    async def run(self, raw_arguments: str) -> ToolResult:
+        """执行工具。失败返回 `ToolResult.failure`，不抛异常。"""
