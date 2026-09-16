@@ -1,6 +1,6 @@
 # 设计决策记录（ADR）
 
-记录项目中的关键技术决策，每条包含**背景 / 决策 / 理由**三部分，供面试追问时直接引用。
+记录项目中的关键技术决策，每条包含**背景 / 决策 / 理由**三部分；改动相关代码前可先看这里，避免重复讨论已经定过的取舍。
 不记录尚未拍板的事项；未定项在架构文档中标 📋。
 
 ## 哪些模块有 Claude Code 对照，哪些是纯自研
@@ -392,7 +392,7 @@
 - server 由 CLI 参数 `--mcp-server` 指定，不做配置文件发现。
 
 **理由**：
-- **不用 SDK**：整个协议只用四个方法（`initialize` / `notifications/initialized` / `tools/list` / `tools/call`），手写约 250 行，零依赖且协议细节完全可控——面试能逐行讲。SDK 恰好会封掉我们想讲的那部分。
+- **不用 SDK**：整个协议只用四个方法（`initialize` / `notifications/initialized` / `tools/list` / `tools/call`），手写约 250 行，零依赖且协议细节完全可控，每一处行为都能追溯到具体代码。SDK 恰好会封掉这部分。
 - **只做 stdio**：stdio 的子进程生命周期天然绑定父进程，不需要端口管理、服务发现和心跳；SSE 是为远端服务准备的，本地开发用不上。
 - **registry 放宽到协议**：MCP 工具的参数 schema 来自远端，没法先造 Pydantic 模型；强制继承 `Tool` 就得塞一个假的 `args_model` 占位。改用一个三成员 Protocol 更诚实，也让 ADR-006「core 不依赖 tools，靠 Protocol 注入」的思路在工具层复用一次。
 - **不做配置发现**：Claude Code 要读用户级 / 项目级 `settings.json` 加 `.mcp.json`，还叠加企业策略。个人项目用显式 CLI 参数更透明，出问题不用猜配置从哪来。
