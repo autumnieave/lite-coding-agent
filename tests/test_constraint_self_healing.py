@@ -97,7 +97,7 @@ async def test_an_empty_summary_skips_tier4_entirely() -> None:
     """模型返回空摘要时整层跳过：不注入、不补录，历史原样留着。
 
     这是刻意的——把空字符串当成「摘要内容为空」注入，等于用一片空白换掉真实历史。
-    代价是下一轮还会再触发一次 Tier 4（见 ADR-012 与 `docs/evidence.md` 的待补项）。
+    代价是下一轮还会再触发一次 Tier 4（见 ADR-012 与 `docs/evidence.md` 的已知限制一节）。
     """
     result, compactor = await _compact("")
 
