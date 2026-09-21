@@ -4,8 +4,8 @@
 工具执行器以 `ToolExecutor` Protocol 的形式注入，`tools.ToolRegistry` 天然满足该协议，
 由 cli 层负责装配。
 
-工具失败会把错误（含工具给出的结构化纠错提示）原样回填给模型，由模型自行修正，
-不打断循环。
+工具失败分两级处理：先把错误（含工具给出的结构化纠错提示）原样回填给模型自修正；
+同一工具连续失败达到阈值仍不收敛时，升级为人工确认或显式要求模型换策略。
 """
 
 from __future__ import annotations
@@ -27,11 +27,15 @@ from agent.core.llm import (
 
 COMPLETED = "completed"
 MAX_TURNS_REACHED = "max_turns"
+ABORTED_BY_USER = "user_aborted"
 
 SYSTEM_ROLE = "system"
 
 DEFAULT_MAX_TURNS = 10
+DEFAULT_MAX_CONSECUTIVE_FAILURES = 3
 EVENT_PREVIEW_LIMIT = 200
+
+FAILURE_ESCALATION = "工具 {name} 已连续失败 {count} 次，请换一种策略或改用其他工具。"
 
 DEFAULT_SYSTEM_PROMPT = (
     "你是一个运行在终端里的 coding agent，可以调用工具查看和修改用户工作区中的文件。"
@@ -150,6 +154,8 @@ class AgentLoop:
         on_text: TextCallback | None = None,
         compactor: Compactor | None = None,
         constraints: ConstraintStore | None = None,
+        max_consecutive_failures: int = DEFAULT_MAX_CONSECUTIVE_FAILURES,
+        on_tool_failure: Callable[[str], bool] | None = None,
     ) -> None:
         """`on_event` 接收工具进度，`on_text` 接收模型增量输出。
 
@@ -158,9 +164,15 @@ class AgentLoop:
         `constraints` 传了就每轮把清单追加到 system prompt 末尾（ADR-016）。这是与压缩
         通道并行的第二条路：短任务不触发压缩时，约束照样在上下文里；长任务压缩时摘要
         Prompt 会再保留一次，两边都丢才会真丢。
+
+        `on_tool_failure` 是连续失败升级时的人工确认钩子：收到一段说明，返回 True 表示
+        继续让模型尝试，返回 False 表示放弃本次任务。不传（CI / 管道场景）就退化为
+        只把「换个策略」的提示交给模型，与 `cli` 层危险命令确认的降级先例一致。
         """
         if max_turns < 1:
             raise ValueError("max_turns 必须 >= 1")
+        if max_consecutive_failures < 1:
+            raise ValueError("max_consecutive_failures 必须 >= 1")
         self._provider = provider
         self._tools = tools
         self._max_turns = max_turns
@@ -169,6 +181,10 @@ class AgentLoop:
         self._on_text = on_text
         self._compactor = compactor
         self._constraints = constraints
+        self._max_consecutive_failures = max_consecutive_failures
+        self._on_tool_failure = on_tool_failure
+        self._failures: dict[str, int] = {}
+        self._escalated: set[str] = set()
 
     @property
     def max_turns(self) -> int:
@@ -177,6 +193,10 @@ class AgentLoop:
     @property
     def constraints(self) -> ConstraintStore | None:
         return self._constraints
+
+    @property
+    def max_consecutive_failures(self) -> int:
+        return self._max_consecutive_failures
 
     def build_system_prompt(self) -> str:
         """拼出这一轮实际使用的 system prompt：基础 prompt + 当前约束清单。
@@ -196,6 +216,9 @@ class AgentLoop:
         history: Iterable[Mapping[str, Any]] = (),
     ) -> LoopResult:
         """执行一次任务。LLM 调用失败会抛 `LLMError`，工具失败不会。"""
+        # 连续失败计数按「本次任务」统计，上一轮任务的失败不该影响这一轮。
+        self._failures.clear()
+        self._escalated.clear()
         carried = [dict(item) for item in history]
         prompt = self.build_system_prompt()
         if carried and _is_base_prompt(carried[0]):
@@ -243,12 +266,26 @@ class AgentLoop:
                     f" -> {'成功' if result.ok else '失败'}：{_preview(result.content)}"
                 )
                 if result.ok:
+                    self._note_success(call.name)
                     messages.append(tool_result_message(call.id, result.content))
                     continue
 
-                # 失败不中断循环：把错误（含工具给的结构化纠错提示）原样回填，
-                # 让模型读完自己改参数。
-                messages.append(tool_result_message(call.id, render_failure(result)))
+                content = render_failure(result)
+                streak = self._note_failure(call.name)
+                if streak >= self._max_consecutive_failures:
+                    escalation = FAILURE_ESCALATION.format(name=call.name, count=streak)
+                    content = f"{content}\n\n{escalation}"
+                    self._emit(f"[第 {turn} 轮] {escalation}")
+                    if self._should_abort(call.name, streak, content):
+                        messages.append(tool_result_message(call.id, content))
+                        self._emit(f"用户选择停止，任务在第 {turn} 轮中断")
+                        return LoopResult(
+                            content=last_content,
+                            turns=turn,
+                            stopped_reason=ABORTED_BY_USER,
+                            messages=tuple(messages),
+                        )
+                messages.append(tool_result_message(call.id, content))
 
         self._emit(f"已达最大轮数 {self._max_turns}，主动停止")
         return LoopResult(
@@ -257,6 +294,29 @@ class AgentLoop:
             stopped_reason=MAX_TURNS_REACHED,
             messages=tuple(messages),
         )
+
+    def _note_success(self, name: str) -> None:
+        """该工具成功了，它的连续失败计数清零。"""
+        self._failures.pop(name, None)
+        self._escalated.discard(name)
+
+    def _note_failure(self, name: str) -> int:
+        """累加该工具的连续失败次数并返回当前值。"""
+        streak = self._failures.get(name, 0) + 1
+        self._failures[name] = streak
+        return streak
+
+    def _should_abort(self, name: str, streak: int, detail: str) -> bool:
+        """连续失败到阈值时问一次人；返回 True 表示放弃本次任务。
+
+        只问一次：问过之后把工具名记进 `_escalated`，否则后续每次失败都会再弹一次。
+        没有确认钩子（CI / 管道）时不问，只靠拼好的提示让模型自己换策略。
+        """
+        if self._on_tool_failure is None or name in self._escalated:
+            return False
+        self._escalated.add(name)
+        prompt = f"工具 {name} 已连续失败 {streak} 次，最近一次失败：{_preview(detail)}"
+        return not self._on_tool_failure(prompt)
 
     def _emit(self, message: str) -> None:
         if self._on_event is not None:

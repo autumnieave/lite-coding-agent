@@ -22,7 +22,13 @@ from agent.core.config import find_env_file, load_env_file
 from agent.core.constraints import DEFAULT_FILENAME, ConstraintStore
 from agent.core.context import estimate_tokens
 from agent.core.llm import BaseProvider, LLMConfigError, LLMError, OpenAICompatProvider
-from agent.core.loop import DEFAULT_MAX_TURNS, SYSTEM_ROLE, AgentLoop, LoopResult
+from agent.core.loop import (
+    ABORTED_BY_USER,
+    DEFAULT_MAX_TURNS,
+    SYSTEM_ROLE,
+    AgentLoop,
+    LoopResult,
+)
 from agent.mcp.client import McpClient, McpError
 from agent.memory import agents_md
 from agent.memory.session import DEFAULT_FILENAME as SESSION_FILENAME
@@ -276,6 +282,27 @@ def _build_approver() -> DangerApprover | None:
     return approve
 
 
+def _build_retry_approver() -> Callable[[str], bool] | None:
+    """工具连续失败时的人工确认钩子，与 `_build_approver` 一样的降级先例。
+
+    交互式终端才问人；管道/CI 下返回 None，此时 AgentLoop 只把「换个策略」的
+    提示交给模型，不阻塞流程。
+    """
+    if not sys.stdin.isatty():
+        return None
+
+    def approve(detail: str) -> bool:
+        print(f"\n{detail}\n继续让模型尝试？[y/N] ", end="", file=sys.stderr, flush=True)
+        try:
+            answer = input()
+        except (EOFError, KeyboardInterrupt):
+            print(file=sys.stderr)
+            return False
+        return answer.strip().lower() in {"y", "yes"}
+
+    return approve
+
+
 def run_chat(args: argparse.Namespace) -> int:
     """执行 `lite-agent chat`。"""
     if args.task is None:
@@ -370,6 +397,7 @@ def run_chat(args: argparse.Namespace) -> int:
         on_text=printer,
         compactor=compactor,
         constraints=store,
+        on_tool_failure=_build_retry_approver(),
     )
 
     mcp = McpClient(on_event=reporter, constraints=store) if mcp_servers else None
@@ -402,6 +430,13 @@ def run_chat(args: argparse.Namespace) -> int:
 
     if args.verbose:
         print(f"[verbose] 压缩统计：{compactor.stats.summary()}", file=sys.stderr)
+
+    if result.stopped_reason == ABORTED_BY_USER:
+        print(
+            f"警告：工具连续失败后你选择停止，任务在第 {result.turns} 轮中断。",
+            file=sys.stderr,
+        )
+        return EXIT_TASK_FAILED
 
     if not result.completed:
         print(
