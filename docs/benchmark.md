@@ -15,7 +15,7 @@
 | 复用 | 数据模型：record 字段、JSONL 落盘、`--resume` 跳过已跑、`--self-test` 离线自检、脚本化判定 + 聚合表 |
 | 不新建 | 不引入新依赖、不加联网 CI job（CI 只跑 `--self-test`） |
 | 联网 | 真跑需要 `LLM_API_KEY`；判定逻辑全部离线可复算 |
-| 轮数上限 | `--max-turns` 默认 6，是安全网而不是评测项（效率由 `steps` + `within_steps` 度量）；被截断的 run 在记录里标 `observations.hit_max_turns` 与 `stopped_reasons`，不静默记成任务失败 |
+| 轮数上限 | `--max-turns` 不传时按类别默认（A/B 类 8、C 类 6），是安全网而不是评测项（效率由 `steps` + `within_steps` 度量）；每次 run 记下实际用的上限（`max_turns`），被截断的 run 另标 `observations.hit_max_turns` 与 `stopped_reasons`，不静默记成任务失败 |
 
 独立成脚本而不是并进实验脚本的原因：实验脚本的会话结构是「声明约束 → 填充 → 探针」一种形态，
 benchmark 有 12 种任务形态，混在一起会让两边的 profile 语义、续跑键、汇总表全都互相污染。
@@ -63,7 +63,7 @@ harness 内部仍有 `Step(label, text)`，`label ∈ setup/declare/fill/probe`�
 | `llm_calls` / `duration_s` | LLM 轮数 / 耗时 |
 
 **benchmark 专有**：`task_id`、`category`、`capabilities`、`allowed_tools`、`required_tools`、
-`tools_used`、`tool_selection_ok`、`params_ok`、`steps`、`escalations`、`aborted`、`observations`
+`tools_used`、`tool_selection_ok`、`params_ok`、`steps`、`escalations`、`aborted`、`max_turns`、`observations`
 （`observations` 放软指标，例如「是否走到过 write_file 被拒的路径」，不参与 `task_success`）。
 
 **experiment 专有**：无。它的 `profile` 调的是约束条数（15 / 40），benchmark 的 `profile` 调填充轮数；
@@ -86,6 +86,21 @@ harness 内部仍有 `Step(label, text)`，`label ∈ setup/declare/fill/probe`�
 
 Q4 附带说明：钩子返回 False 的中止路径不单列用例，由 `tests/test_failure_escalation.py` 覆盖，
 benchmark 只测「能恢复」这一侧。
+
+### 5.1 已拍板（首次全量 `on` 档跑完后修订）
+
+1. **A/B 类的 JSON 解析放宽**：允许整段被一层 ``` 围栏包住（`parse_json_lenient`）。
+   C 类保持严格——C1 的「必须是合法 JSON」、C2 的「不得出现代码围栏」本身就是被考察的约束，
+   放宽会把该测出来的违规洗掉。影响：A2 由「格式违规」改为按内容判。
+2. **B4 的步数上限 4 → 6**，与 B1–B3 对齐。效率已经由 `steps` + `within_steps` 度量，
+   不该因为一条任务要试探 shell 就比同类更苛刻。
+3. **「按 group」汇总只统计 `constraints_total > 0` 的行**（即 C 类）。A/B 不声明约束，
+   混进去会把保留率的分母与语义一起搅乱。
+4. **`observations` 增加 `escalated_tools`**：L3 钩子只收到一段文本，工具名从文本里解，
+   解不出记 `unknown`。这是补全 Q4 的可观测性。
+5. **轮数上限按类别给**：A/B 类 6 → 8，C 类保持 6。A/B 是「一件事做完就收尾」，需要留出收尾轮；
+   C 类每步只读一个文件，6 轮足够。上限不替代效率度量（`steps ≤ steps_limit` 另有其表），
+   每次 run 把实际上限写进 `max_turns`，跨配置比较时能看出差异。
 
 ## 6. 任务清单
 
