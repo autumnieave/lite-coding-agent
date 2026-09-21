@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Protocol
@@ -17,23 +18,77 @@ from pydantic import BaseModel, ValidationError
 
 
 class ToolError(Exception):
-    """工具可预期的失败（文件不存在、参数越界等），会被转成错误结果回填。"""
+    """工具可预期的失败（文件不存在、参数越界等），会被转成错误结果回填。
+
+    除了给模型看的原因，还可以带三类结构化提示，让它一次就能改对：
+    `expected_format` 说明期望的输入格式，`available_values` 列出当前可用的取值，
+    `last_error` 记录这次失败的量化细节（例如实际匹配到几次）。
+
+    这些字段会原样带到 `ToolResult` 上，由 `core.loop` 拼进回填文本。注意 `core` 不导入
+    `tools`（AGENTS.md 的 C4），它是按同名属性读的——见 `core/loop.py` 的 `ToolOutcome` 协议。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        expected_format: str | None = None,
+        available_values: Sequence[str] | None = None,
+        last_error: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.expected_format = expected_format
+        self.available_values = list(available_values) if available_values else None
+        self.last_error = last_error
 
 
 @dataclass(frozen=True, slots=True)
 class ToolResult:
-    """工具执行结果。`ok=False` 时 `content` 是给模型看的错误说明。"""
+    """工具执行结果。`ok=False` 时 `content` 是给模型看的错误说明。
+
+    后三个字段是可选的纠错提示（含义见 `ToolError`），`core.loop` 拼回填文本时会用；
+    不填就退回原来的单段文本。
+    """
 
     ok: bool
     content: str
+    expected_format: str | None = None
+    available_values: tuple[str, ...] | None = None
+    last_error: str | None = None
 
     @classmethod
-    def success(cls, content: str) -> ToolResult:
-        return cls(ok=True, content=content)
+    def success(
+        cls,
+        content: str,
+        *,
+        expected_format: str | None = None,
+        available_values: Sequence[str] | None = None,
+        last_error: str | None = None,
+    ) -> ToolResult:
+        return cls(
+            ok=True,
+            content=content,
+            expected_format=expected_format,
+            available_values=tuple(available_values) if available_values else None,
+            last_error=last_error,
+        )
 
     @classmethod
-    def failure(cls, message: str) -> ToolResult:
-        return cls(ok=False, content=message)
+    def failure(
+        cls,
+        message: str,
+        *,
+        expected_format: str | None = None,
+        available_values: Sequence[str] | None = None,
+        last_error: str | None = None,
+    ) -> ToolResult:
+        return cls(
+            ok=False,
+            content=message,
+            expected_format=expected_format,
+            available_values=tuple(available_values) if available_values else None,
+            last_error=last_error,
+        )
 
 
 def resolve_path(root: Path, raw: str) -> Path:
@@ -94,7 +149,12 @@ class Tool(ABC):
         try:
             return await self.execute(args)
         except ToolError as exc:
-            return ToolResult.failure(str(exc))
+            return ToolResult.failure(
+                str(exc),
+                expected_format=exc.expected_format,
+                available_values=exc.available_values,
+                last_error=exc.last_error,
+            )
         except Exception as exc:  # noqa: BLE001 - 兜底，避免单个工具异常打断整个循环
             return ToolResult.failure(f"工具执行异常：{type(exc).__name__}: {exc}")
 

@@ -11,6 +11,24 @@ from agent.tools.base import Tool, ToolError, ToolResult, resolve_path
 from agent.tools.tracking import FileTracker
 
 MAX_LINES = 2000
+HINT_LIMIT = 20
+"""路径提示里最多列几个条目，避免把上下文塞满。"""
+
+
+def _nearby_entries(root: Path, path: Path) -> list[str]:
+    """列出「最可能放目标文件的那一层」的条目，帮模型改对路径。
+
+    优先看目标文件的上一级目录——多数失败只是文件名或子目录写错；
+    那一层不存在时退回工作区根目录。
+    """
+    parent = path.parent
+    directory = parent if parent.is_dir() else Path(root)
+    try:
+        entries = sorted(directory.iterdir(), key=lambda item: item.name.lower())
+    except OSError:
+        return []
+    names = [f"{item.name}/" if item.is_dir() else item.name for item in entries]
+    return names[:HINT_LIMIT]
 
 
 class ReadFileArgs(BaseModel):
@@ -37,7 +55,11 @@ class ReadFileTool(Tool):
     async def execute(self, args: ReadFileArgs) -> ToolResult:
         path = resolve_path(self._root, args.path)
         if not path.exists():
-            raise ToolError(f"文件不存在：{args.path}")
+            raise ToolError(
+                f"文件不存在：{args.path}",
+                expected_format="path 必须是工作区内已存在的文件路径，相对工作区根目录书写",
+                available_values=_nearby_entries(self._root, path),
+            )
         if path.is_dir():
             raise ToolError(f"这是目录而不是文件：{args.path}（可用 list_dir 查看其内容）")
 

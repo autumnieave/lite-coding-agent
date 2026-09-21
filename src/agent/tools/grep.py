@@ -19,6 +19,21 @@ from agent.tools.ignore import IGNORED_DIRS
 
 MAX_MATCHES = 100
 MAX_LINE_CHARS = 200
+HINT_LIMIT = 20
+"""无匹配时最多提示几个可搜索目录。"""
+
+
+def _searchable_dirs(base: Path) -> list[str]:
+    """列出搜索起点下可搜索的子目录（已排除 IGNORED_DIRS），供无匹配时提示。"""
+    directory = base if base.is_dir() else base.parent
+    try:
+        children = sorted(directory.iterdir(), key=lambda item: item.name.lower())
+    except OSError:
+        return []
+    names = [
+        f"{child.name}/" for child in children if child.is_dir() and child.name not in IGNORED_DIRS
+    ]
+    return names[:HINT_LIMIT]
 
 
 class GrepArgs(BaseModel):
@@ -57,7 +72,14 @@ class GrepTool(Tool):
 
         matches, hidden = await asyncio.to_thread(self._search, base, pattern, args.include)
         if not matches:
-            return ToolResult.success(f"没有匹配 {args.pattern!r} 的内容。")
+            # 没匹配不是错误，所以仍是 success；只是把「还能去哪儿找」一并给出，
+            # 免得模型对同一个 pattern 反复重试。
+            directories = _searchable_dirs(base)
+            hint = f"可搜索的目录：{'、'.join(directories)}。" if directories else ""
+            return ToolResult.success(
+                f"没有匹配 {args.pattern!r} 的内容。{hint}",
+                available_values=directories,
+            )
 
         body = "\n".join(matches)
         if hidden:

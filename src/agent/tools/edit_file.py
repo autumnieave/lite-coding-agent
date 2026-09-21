@@ -108,7 +108,9 @@ class EditFileTool(Tool):
         if actual is None:
             raise ToolError(
                 f"未找到 old_string：{args.path} 中没有与给定文本匹配的内容。"
-                "请先用 read_file 重新读取该文件，逐字符核对原文的缩进、空格与换行后再试。"
+                "请先用 read_file 重新读取该文件，逐字符核对原文的缩进、空格与换行后再试。",
+                expected_format="old_string 必须与文件中的原文逐字符一致（含缩进、空格与换行）",
+                last_error="本次 old_string 在文件中匹配到 0 次",
             )
 
         count = content.count(actual)
@@ -116,7 +118,12 @@ class EditFileTool(Tool):
             lines = "、".join(str(number) for number in _occurrence_lines(content, actual))
             raise ToolError(
                 f"old_string 在 {args.path} 中出现了 {count} 次（起始行：{lines}），必须唯一。"
-                "请把 old_string 扩展到包含更多上下文（例如带上前后各一行或整段），使其只匹配一处。"
+                "请把 old_string 扩展到包含更多上下文"
+                "（例如带上前后各一行或整段），使其只匹配一处。",
+                expected_format=(
+                    "需提供唯一匹配的 old_string：带上足够上下文，使其在文件里只出现一次"
+                ),
+                last_error=f"本次 old_string 实际匹配到 {count} 次（起始行：{lines}）",
             )
 
         new_content = content.replace(actual, args.new_string, 1)

@@ -3,6 +3,9 @@
 依赖约束（见 AGENTS.md 的 C4）：core 不导入 tools。
 工具执行器以 `ToolExecutor` Protocol 的形式注入，`tools.ToolRegistry` 天然满足该协议，
 由 cli 层负责装配。
+
+工具失败会把错误（含工具给出的结构化纠错提示）原样回填给模型，由模型自行修正，
+不打断循环。
 """
 
 from __future__ import annotations
@@ -39,10 +42,20 @@ DEFAULT_SYSTEM_PROMPT = (
 
 
 class ToolOutcome(Protocol):
-    """工具执行结果的最小结构。`tools.ToolResult` 满足此协议。"""
+    """工具执行结果的最小结构。`tools.ToolResult` 满足此协议。
+
+    后三个是可选的结构化纠错提示，工具层填了就拼进回填文本，没填就保持原样。
+    `core` 只按属性名读取，不导入 `tools`（C4）。
+    """
 
     ok: bool
     content: str
+    expected_format: str | None
+    """期望的输入格式说明。"""
+    available_values: tuple[str, ...] | None
+    """当前可用的取值/选项。"""
+    last_error: str | None
+    """这次失败的量化细节，例如实际匹配到几次。"""
 
 
 class ToolExecutor(Protocol):
@@ -83,6 +96,32 @@ def _is_base_prompt(message: Mapping[str, Any]) -> bool:
     if message.get("role") != SYSTEM_ROLE:
         return False
     return SUMMARY_PREFIX not in str(message.get("content") or "")
+
+
+def render_failure(result: ToolOutcome) -> str:
+    """把工具失败结果拼成回填给模型的文本。
+
+    带了结构化提示就拼成「错误：…。期望格式：…。可用值：…。上次失败：…」，
+    没带就原样返回 `content`，保持原来的简洁格式不变。
+    """
+    segments: list[str] = []
+    expected = getattr(result, "expected_format", None)
+    if expected:
+        segments.append(f"期望格式：{expected}")
+    available = getattr(result, "available_values", None)
+    if available:
+        segments.append(f"可用值：{'、'.join(available)}")
+    last_error = getattr(result, "last_error", None)
+    if last_error:
+        segments.append(f"上次失败：{last_error}")
+    if not segments:
+        return result.content
+
+    message = result.content.strip()
+    if message and not message.endswith(("。", "！", "？", "：", "）")):
+        message += "。"
+    head = f"错误：{message}" if message else "错误"
+    return "".join([head, *(f"{segment}。" for segment in segments)])
 
 
 def _preview(text: str, limit: int = EVENT_PREVIEW_LIMIT) -> str:
@@ -203,7 +242,13 @@ class AgentLoop:
                     f"[第 {turn} 轮] 结果 {call.name}"
                     f" -> {'成功' if result.ok else '失败'}：{_preview(result.content)}"
                 )
-                messages.append(tool_result_message(call.id, result.content))
+                if result.ok:
+                    messages.append(tool_result_message(call.id, result.content))
+                    continue
+
+                # 失败不中断循环：把错误（含工具给的结构化纠错提示）原样回填，
+                # 让模型读完自己改参数。
+                messages.append(tool_result_message(call.id, render_failure(result)))
 
         self._emit(f"已达最大轮数 {self._max_turns}，主动停止")
         return LoopResult(

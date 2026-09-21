@@ -184,11 +184,19 @@ class BashTool(Tool):
         if self._approver is not None:
             if self._approver(args.command):
                 return
-            raise ToolError("用户拒绝执行这条命令，请改用其他方式，或先向用户确认。")
+            raise ToolError(
+                "用户拒绝执行这条命令，请改用其他方式，或先向用户确认。",
+                expected_format="该命令被安全策略拦截，请换用更安全的等价命令",
+                last_error="用户在确认环节拒绝了这条命令",
+            )
         if args.confirm_dangerous:
             return
         raise ToolError(
             "命令命中危险模式，已被拦截：" + args.command + "\n"
             "如果确实需要执行，请重新调用并显式传入 confirm_dangerous=true；"
-            "否则请改用更安全的方式。"
+            "否则请改用更安全的方式。",
+            expected_format=(
+                "该命令被安全策略拦截，请换用更安全的等价命令"
+                "；确实必要时再显式传 confirm_dangerous=true"
+            ),
         )
