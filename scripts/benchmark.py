@@ -102,7 +102,20 @@ PARAM_ERROR_MARKERS = (
 """命中这些前缀 = 参数层面的错误，用于 params_ok。"""
 
 SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
-DEFAULT_MAX_TURNS = 6
+ESCALATION_NAME = re.compile(r"^工具 (?P<name>\S+) 已连续失败 (?P<count>\d+) 次")
+"""从 L3 升级提示里解出工具名。钩子只拿到一段文本，格式变了就退化成 unknown。"""
+
+FENCE = re.compile(r"```[a-zA-Z0-9_+-]*\n(?P<body>.*?)\n?```", re.S)
+"""最外层的一条代码围栏，`parse_json_lenient` 用它剥壳。"""
+
+TURNS_BY_CATEGORY = {
+    CATEGORY_RETRIEVAL: 8,
+    CATEGORY_EDIT: 8,
+    CATEGORY_LONG: 6,
+}
+"""单步任务的轮数上限按类别给：A/B 类是一件事做完就收尾，多留两轮收尾用；
+
+C 类每步只读一个文件，6 轮足够。上限是安全网，效率由 `steps` 单独度量。"""
 """单步任务的轮数上限。4 太紧：模型多用几次工具就被截断，会把「没做完」误记成「做不对」。"""
 DEFAULT_OUT = Path("docs/evidence/benchmark_runs.jsonl")
 
@@ -170,6 +183,21 @@ def parse_json(text: str) -> Any | None:
         return json.loads(text.strip())
     except (TypeError, ValueError):
         return None
+
+
+def parse_json_lenient(text: str) -> Any | None:
+    """A/B 类用：允许整段被一层 ``` 围栏包住再给 JSON。
+
+    C 类不适用——那里「不得出现围栏」本身就是被考察的约束（C1 的"必须是合法 JSON"、
+    C2 的"不得出现代码围栏"），宽松解析会把该测出来的违规洗掉。见 docs/benchmark.md §5.1。
+    """
+    payload = parse_json(text)
+    if payload is not None:
+        return payload
+    match = FENCE.fullmatch(text.strip())
+    if match is None:
+        return None
+    return parse_json(match.group("body"))
 
 
 def collect_keys(payload: Any) -> list[str]:
@@ -367,7 +395,7 @@ def _judge_a1(ctx: Judgment) -> dict[str, bool]:
 
 
 def _judge_a2(ctx: Judgment) -> dict[str, bool]:
-    payload = parse_json(ctx.reply("probe"))
+    payload = parse_json_lenient(ctx.reply("probe"))
     files = payload.get("files") if isinstance(payload, dict) else None
     expected = list(ctx.facts.core_files)
     return {
@@ -410,7 +438,7 @@ def _judge_b1(ctx: Judgment) -> dict[str, bool]:
 
 def _judge_b2(ctx: Judgment) -> dict[str, bool]:
     text = ctx.read("notes/summary.md")
-    payload = parse_json(text or "")
+    payload = parse_json_lenient(text or "")
     return {
         "file_created": text is not None,
         "json_valid": isinstance(payload, dict),
@@ -425,7 +453,7 @@ def _judge_b3(ctx: Judgment) -> dict[str, bool]:
 
 
 def _judge_b4(ctx: Judgment) -> dict[str, bool]:
-    payload = parse_json(ctx.reply("probe"))
+    payload = parse_json_lenient(ctx.reply("probe"))
     return {
         "json_valid": isinstance(payload, dict),
         "total_lines_correct": isinstance(payload, dict)
@@ -633,7 +661,7 @@ def build_tasks(facts: Facts, fill_turns: int, rng: random.Random) -> tuple[Task
                 ),
             ),
             judge=_judge_b4,
-            steps_limit=4,
+            steps_limit=6,
         ),
         Task(
             task_id="C1",
@@ -745,7 +773,7 @@ async def run_task(
     seed: int,
     provider: BaseProvider,
     profile: str,
-    max_turns: int,
+    max_turns: int | None,
 ) -> dict[str, Any]:
     rng = random.Random(seed)
     fill_turns = FILL_TURNS[profile]
@@ -755,6 +783,8 @@ async def run_task(
         facts, snapshot = build_workspace(root, rng, fill_turns)
         tasks = build_tasks(facts, fill_turns, rng)
         task = next(item for item in tasks if item.task_id == task_id)
+        # --max-turns 显式传了就用它，否则按类别取默认
+        turn_cap = max_turns if max_turns is not None else TURNS_BY_CATEGORY[task.category]
 
         # Q3：只有 long_context 才建约束存储；A/B 类不声明约束，off 组没有意义
         store = None
@@ -769,17 +799,20 @@ async def run_task(
         )
         recorder = RecordingRegistry(build_default_registry(root))
         escalations = 0
+        escalated: list[str] = []
 
         def on_tool_failure(prompt: str) -> bool:
-            """Q4：用 L3 的钩子计数升级次数；固定返回 True，只计不拦。"""
+            """Q4：钩子计数并记下是哪个工具；固定返回 True，只计不拦。"""
             nonlocal escalations
             escalations += 1
+            match = ESCALATION_NAME.match(prompt)
+            escalated.append(match.group("name") if match else "unknown")
             return True
 
         loop = AgentLoop(
             provider,
             recorder,
-            max_turns=max_turns,
+            max_turns=turn_cap,
             compactor=compactor,
             constraints=store,
             on_tool_failure=on_tool_failure,
@@ -819,6 +852,7 @@ async def run_task(
         # 被轮数上限截断的 run 不能静默当成任务失败：单独标出来（见 docs/benchmark.md §1）
         observations["hit_max_turns"] = MAX_TURNS_REACHED in stopped
         observations["stopped_reasons"] = sorted(set(stopped))
+        observations["escalated_tools"] = escalated
 
         used = [call.name for call in recorder.calls]
         preserved, verbatim = count_preserved(history, task.constraints)
@@ -830,6 +864,7 @@ async def run_task(
         )
         return {
             "run_id": run_id,
+            "max_turns": turn_cap,
             "group": group,
             "profile": profile,
             "seed": seed,
@@ -898,13 +933,18 @@ def aggregate(records: Sequence[Mapping[str, Any]]) -> str:
     lines.extend(
         [
             "",
-            "### 按 group（只有 long_context 有两档）",
+            "### 按 group（只统计声明了约束的任务，即 C 类）",
             "| group | 次数 | 保留率 | 逐字保留率 | 违反数 | 任务成功率 | Tier 4 | 摘要消息数 |",
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for group in GROUPS:
-        rows = [item for item in records if item["group"] == group]
+        # A/B 类没有约束，混进来会把保留率的分母和语义一起搅乱
+        rows = [
+            item
+            for item in records
+            if item["group"] == group and int(item["constraints_total"]) > 0
+        ]
         if not rows:
             continue
         total = sum(int(item["constraints_total"]) for item in rows)
@@ -1183,6 +1223,42 @@ def self_test() -> int:
         )
         assert bad_ctx.param_errors and not ctx.param_errors
 
+        # A/B 类允许剥一层围栏；C 类仍然严格
+        fenced = '```json\n{"files": ["a.py"]}\n```'
+        assert parse_json(fenced) is None, "严格解析不接受围栏"
+        assert parse_json_lenient(fenced) == {"files": ["a.py"]}
+        assert all(judge("A2", {"probe": f"```json\n{good_a2}\n```"}).values())
+        assert not judge("C1", {"probe": fenced})["json_valid"], "C1 仍须判围栏违规"
+        assert by_id["B4"].steps_limit == 6, "B4 的步数上限与 B1-B3 统一"
+        for category in (CATEGORY_RETRIEVAL, CATEGORY_EDIT):
+            assert TURNS_BY_CATEGORY[category] == 8, "A/B 类的轮数上限是 8"
+        assert TURNS_BY_CATEGORY[CATEGORY_LONG] == 6, "C 类保持 6"
+        for category in CATEGORIES:
+            assert category in TURNS_BY_CATEGORY, "每个类别都要有上限"
+
+        def _fake(**overrides: Any) -> dict[str, Any]:
+            record: dict[str, Any] = {
+                "task_id": "C1",
+                "run_id": 1,
+                "group": GROUP_ON,
+                "category": CATEGORY_LONG,
+                "capabilities": [CAP_CONSTRAINT],
+                "task_success": True,
+                "tool_selection_ok": True,
+                "steps": 1,
+                "constraints_total": 1,
+                "preserved": 1,
+                "preserved_verbatim": 1,
+                "violated": 0,
+                "summary_calls": 1,
+                "summary_messages": 1,
+            }
+            record.update(overrides)
+            return record
+
+        table = aggregate([_fake(), _fake(task_id="A1", constraints_total=0)])
+        assert "| on | 1 | 100.0% |" in table, "无约束的任务不该进按 group 的表"
+
     print("self-test 通过：夹具、分类与判定逻辑符合预期")
     return 0
 
@@ -1208,8 +1284,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-turns",
         type=int,
-        default=DEFAULT_MAX_TURNS,
-        help="单步任务的 LLM 轮数上限（安全网，效率由 steps 单独度量）；默认 %(default)s",
+        default=None,
+        help="单步任务的 LLM 轮数上限；不传则按类别默认（A/B 类 8，C 类 6）",
     )
     parser.add_argument("--out", default=str(DEFAULT_OUT), help="逐次记录写入的 JSONL 路径")
     parser.add_argument(
