@@ -93,6 +93,14 @@ CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 FILLER_LINES = 200
 DECLARE_HEAD = "以下约束在整个会话期间有效，请记住但不要复述："
 
+EXAMPLE_COUNT = 7
+EXAMPLE_LINES = 180
+"""提示词里的示例值，必须不等于真值。
+
+真值随填充轮数变（standard 12 个文件 / 2400 行，stress 14 / 2800），
+示例固定成一个不相干的数：照抄示例就能过的话，判定没有区分力。
+"""
+
 PARAM_ERROR_MARKERS = (
     "参数校验失败",
     "参数不是合法 JSON",
@@ -105,8 +113,8 @@ SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
 ESCALATION_NAME = re.compile(r"^工具 (?P<name>\S+) 已连续失败 (?P<count>\d+) 次")
 """从 L3 升级提示里解出工具名。钩子只拿到一段文本，格式变了就退化成 unknown。"""
 
-FENCE = re.compile(r"```[a-zA-Z0-9_+-]*\n(?P<body>.*?)\n?```", re.S)
-"""最外层的一条代码围栏，`parse_json_lenient` 用它剥壳。"""
+FENCE = re.compile(r"```[a-zA-Z0-9_+-]*[ \t]*\r?\n?(?P<body>.*?)```", re.S)
+"""代码围栏：允许夹在说明文字里，也允许起止与内容同行。"""
 
 TURNS_BY_CATEGORY = {
     CATEGORY_RETRIEVAL: 8,
@@ -185,8 +193,24 @@ def parse_json(text: str) -> Any | None:
         return None
 
 
+def _json_candidates(text: str) -> list[str]:
+    """按「先围栏、后首尾括号」列出候选片段，供宽松解析逐个试。
+
+    只负责定位不负责解析：候选未必是 JSON，试不出来就换下一个。
+    """
+    found = [match.group("body") for match in FENCE.finditer(text)]
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start = text.find(opener)
+        end = text.rfind(closer)
+        if start != -1 and end > start:
+            found.append(text[start : end + 1])
+    return found
+
+
 def parse_json_lenient(text: str) -> Any | None:
-    """A/B 类用：允许整段被一层 ``` 围栏包住再给 JSON。
+    """A/B 类用：回复里夹带说明文字或一层围栏，只要能取出一处合法 JSON 就算。
+
+    不要求整段只由围栏构成——「内容正确 + 多一句收尾话」不该判成不合规。
 
     C 类不适用——那里「不得出现围栏」本身就是被考察的约束（C1 的"必须是合法 JSON"、
     C2 的"不得出现代码围栏"），宽松解析会把该测出来的违规洗掉。见 docs/benchmark.md §5.1。
@@ -194,10 +218,11 @@ def parse_json_lenient(text: str) -> Any | None:
     payload = parse_json(text)
     if payload is not None:
         return payload
-    match = FENCE.fullmatch(text.strip())
-    if match is None:
-        return None
-    return parse_json(match.group("body"))
+    for candidate in _json_candidates(text):
+        payload = parse_json(candidate)
+        if payload is not None:
+            return payload
+    return None
 
 
 def collect_keys(payload: Any) -> list[str]:
@@ -624,7 +649,7 @@ def build_tasks(facts: Facts, fill_turns: int, rng: random.Random) -> tuple[Task
                 Step(
                     "probe",
                     "新建 notes/summary.md，内容是一个 JSON 对象，形如 "
-                    f'{{"file_count": {len(facts.notes)}}}，file_count 是 {notes_dir} 下 '
+                    f'{{"file_count": {EXAMPLE_COUNT}}}，file_count 是 {notes_dir} 下 '
                     ".txt 文件的个数。",
                 ),
             ),
@@ -657,7 +682,7 @@ def build_tasks(facts: Facts, fill_turns: int, rng: random.Random) -> tuple[Task
                 Step(
                     "probe",
                     f"用 bash 统计 {notes_dir} 下所有 .txt 文件的总行数，输出 JSON 对象，"
-                    '形如 {"total_lines": 2400}。',
+                    f'形如 {{"total_lines": {EXAMPLE_LINES}}}。',
                 ),
             ),
             judge=_judge_b4,
@@ -905,6 +930,17 @@ def _rate(part: int, total: int) -> str:
     return f"{part / total:.1%}" if total else "-"
 
 
+def _stability(passed: int, total: int) -> str:
+    """多轮跑的稳定性：全过 / 全挂 / 中间——单次运行会翻转的任务要能一眼看出来。"""
+    if total <= 1:
+        return "-"
+    if passed == total:
+        return "稳定通过"
+    if passed == 0:
+        return "稳定失败"
+    return f"不稳定（{passed}/{total}）"
+
+
 def aggregate(records: Sequence[Mapping[str, Any]]) -> str:
     lines = ["### 按 category", "| category | 次数 | 任务成功率 | 工具选择 | 平均步数 |"]
     lines.append("| --- | ---: | ---: | ---: | ---: |")
@@ -917,6 +953,18 @@ def aggregate(records: Sequence[Mapping[str, Any]]) -> str:
             f"{_rate(sum(bool(i['task_success']) for i in rows), len(rows))} | "
             f"{_rate(sum(bool(i['tool_selection_ok']) for i in rows), len(rows))} | "
             f"{sum(int(i['steps']) for i in rows) / len(rows):.1f} |"
+        )
+
+    lines.extend(["", "### 按任务", "| 任务 | 次数 | 任务成功率 | 稳定性 |"])
+    lines.append("| --- | ---: | ---: | --- |")
+    for task_id in TASK_IDS:
+        rows = [item for item in records if item["task_id"] == task_id]
+        if not rows:
+            continue
+        passed = sum(bool(item["task_success"]) for item in rows)
+        lines.append(
+            f"| {task_id} | {len(rows)} | {_rate(passed, len(rows))} | "
+            f"{_stability(passed, len(rows))} |"
         )
 
     lines.extend(["", "### 按 capability", "| capability | 覆盖次数 | 任务成功率 |"])
@@ -1229,6 +1277,14 @@ def self_test() -> int:
         assert parse_json_lenient(fenced) == {"files": ["a.py"]}
         assert all(judge("A2", {"probe": f"```json\n{good_a2}\n```"}).values())
         assert not judge("C1", {"probe": fenced})["json_valid"], "C1 仍须判围栏违规"
+        # 宽松解析：说明文字里夹围栏、围栏与内容同行都要能取出来
+        assert parse_json_lenient(f"结论如下：\n{fenced}\n以上。") == {"files": ["a.py"]}
+        assert parse_json_lenient('```json {"files": ["a.py"]} ```') == {"files": ["a.py"]}
+        assert parse_json_lenient('结果 {"files": ["a.py"]} 完毕') == {"files": ["a.py"]}
+        assert parse_json_lenient("这里没有 JSON") is None
+        # 提示词里的示例值不能等于真值，否则照抄示例就能过
+        assert str(len(facts.notes)) not in by_id["B2"].steps[0].text, "B2 示例泄漏真值"
+        assert str(facts.total_lines) not in by_id["B4"].steps[0].text, "B4 示例泄漏真值"
         assert by_id["B4"].steps_limit == 6, "B4 的步数上限与 B1-B3 统一"
         for category in (CATEGORY_RETRIEVAL, CATEGORY_EDIT):
             assert TURNS_BY_CATEGORY[category] == 8, "A/B 类的轮数上限是 8"
@@ -1258,6 +1314,9 @@ def self_test() -> int:
 
         table = aggregate([_fake(), _fake(task_id="A1", constraints_total=0)])
         assert "| on | 1 | 100.0% |" in table, "无约束的任务不该进按 group 的表"
+        assert "| C1 | 1 | 100.0% | - |" in table, "单次运行不标稳定性"
+        flipped = aggregate([_fake(), _fake(run_id=2, task_success=False)])
+        assert "不稳定（1/2）" in flipped, "同任务结果翻转要标不稳定"
 
     print("self-test 通过：夹具、分类与判定逻辑符合预期")
     return 0
