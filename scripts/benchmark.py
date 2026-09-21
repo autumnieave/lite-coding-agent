@@ -941,46 +941,73 @@ def _stability(passed: int, total: int) -> str:
     return f"不稳定（{passed}/{total}）"
 
 
+def _content_ok(record: Mapping[str, Any]) -> bool:
+    """内容判定：把 within_steps 拎出来单独算。
+
+    正确性与效率是两件事——「做对了但绕路」不该记成「做错」，混在一格就看不出一组失败
+    到底出在哪一层（见 docs/benchmark.md §5.1）。
+    """
+    checks = record["checks"]
+    return all(bool(value) for key, value in checks.items() if key != "within_steps")
+
+
+def _within_steps(record: Mapping[str, Any]) -> bool | None:
+    """步数是否在上限内；没有步数上限的任务返回 None（表里显示 `-`）。"""
+    checks = record["checks"]
+    return bool(checks["within_steps"]) if "within_steps" in checks else None
+
+
+def _within_rate(rows: Sequence[Mapping[str, Any]]) -> str:
+    """一组任务的步数达标率；整组都没有步数上限时返回 `-`。"""
+    values = [value for value in (_within_steps(item) for item in rows) if value is not None]
+    return _rate(sum(bool(value) for value in values), len(values))
+
+
 def aggregate(records: Sequence[Mapping[str, Any]]) -> str:
     lines = [
         "> A/B 类只有 on 档；C 类含 on 与 off 两组，"
         "下面两张表里 C 行是两组合计，分组结论看最后一节。",
         "",
         "### 按 category",
-        "| category | 次数 | 任务成功率 | 工具选择 | 平均步数 |",
+        "| category | 次数 | 内容正确 | 步数达标 | 任务成功 | 工具选择 | 平均步数 |",
     ]
-    lines.append("| --- | ---: | ---: | ---: | ---: |")
+    lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
     for category in CATEGORIES:
         rows = [item for item in records if item["category"] == category]
         if not rows:
             continue
+        content = sum(1 for item in rows if _content_ok(item))
         lines.append(
-            f"| {category} | {len(rows)} | "
+            f"| {category} | {len(rows)} | {_rate(content, len(rows))} | "
+            f"{_within_rate(rows)} | "
             f"{_rate(sum(bool(i['task_success']) for i in rows), len(rows))} | "
             f"{_rate(sum(bool(i['tool_selection_ok']) for i in rows), len(rows))} | "
             f"{sum(int(i['steps']) for i in rows) / len(rows):.1f} |"
         )
 
-    lines.extend(["", "### 按任务", "| 任务 | 次数 | 任务成功率 | 稳定性 |"])
-    lines.append("| --- | ---: | ---: | --- |")
+    lines.extend(["", "### 按任务", "| 任务 | 次数 | 内容正确 | 步数达标 | 任务成功 | 稳定性 |"])
+    lines.append("| --- | ---: | ---: | ---: | ---: | --- |")
     for task_id in TASK_IDS:
         rows = [item for item in records if item["task_id"] == task_id]
         if not rows:
             continue
         passed = sum(bool(item["task_success"]) for item in rows)
+        content = sum(1 for item in rows if _content_ok(item))
         lines.append(
-            f"| {task_id} | {len(rows)} | {_rate(passed, len(rows))} | "
+            f"| {task_id} | {len(rows)} | {_rate(content, len(rows))} | "
+            f"{_within_rate(rows)} | {_rate(passed, len(rows))} | "
             f"{_stability(passed, len(rows))} |"
         )
 
-    lines.extend(["", "### 按 capability", "| capability | 覆盖次数 | 任务成功率 |"])
-    lines.append("| --- | ---: | ---: |")
+    lines.extend(["", "### 按 capability", "| capability | 覆盖次数 | 内容正确 | 任务成功率 |"])
+    lines.append("| --- | ---: | ---: | ---: |")
     for capability in CAPABILITIES:
         rows = [item for item in records if capability in item["capabilities"]]
         if not rows:
             continue
+        content = sum(1 for item in rows if _content_ok(item))
         lines.append(
-            f"| {CAPABILITY_LABELS[capability]} | {len(rows)} | "
+            f"| {CAPABILITY_LABELS[capability]} | {len(rows)} | {_rate(content, len(rows))} | "
             f"{_rate(sum(bool(i['task_success']) for i in rows), len(rows))} |"
         )
 
@@ -1314,13 +1341,29 @@ def self_test() -> int:
                 "violated": 0,
                 "summary_calls": 1,
                 "summary_messages": 1,
+                "checks": {"json_valid": True, "within_steps": True},
             }
             record.update(overrides)
             return record
 
         table = aggregate([_fake(), _fake(task_id="A1", constraints_total=0)])
         assert "| on | 1 | 100.0% |" in table, "无约束的任务不该进按 group 的表"
-        assert "| C1 | 1 | 100.0% | - |" in table, "单次运行不标稳定性"
+        assert "| C1 | 1 | 100.0% | 100.0% | 100.0% | - |" in table, "单次运行不标稳定性"
+        # 正确性与效率分开：内容对但超步数，不能记成「做错」
+        over = aggregate(
+            [
+                _fake(
+                    run_id=1, task_success=False, checks={"json_valid": True, "within_steps": False}
+                ),
+                _fake(
+                    run_id=2, task_success=False, checks={"json_valid": True, "within_steps": False}
+                ),
+            ]
+        )
+        assert "| C1 | 2 | 100.0% | 0.0% | 0.0% | 稳定失败 |" in over, "超步数要单独记一列"
+        # 没有步数上限的任务，步数达标列应为 `-`
+        no_budget = aggregate([_fake(task_id="C3", checks={"token_recalled": True})])
+        assert "| C3 | 1 | 100.0% | - | 100.0% | - |" in no_budget, "无步数上限时该列留空"
         flipped = aggregate([_fake(), _fake(run_id=2, task_success=False)])
         assert "不稳定（1/2）" in flipped, "同任务结果翻转要标不稳定"
 
