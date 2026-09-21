@@ -942,7 +942,13 @@ def _stability(passed: int, total: int) -> str:
 
 
 def aggregate(records: Sequence[Mapping[str, Any]]) -> str:
-    lines = ["### 按 category", "| category | 次数 | 任务成功率 | 工具选择 | 平均步数 |"]
+    lines = [
+        "> A/B 类只有 on 档；C 类含 on 与 off 两组，"
+        "下面两张表里 C 行是两组合计，分组结论看最后一节。",
+        "",
+        "### 按 category",
+        "| category | 次数 | 任务成功率 | 工具选择 | 平均步数 |",
+    ]
     lines.append("| --- | ---: | ---: | ---: | ---: |")
     for category in CATEGORIES:
         rows = [item for item in records if item["category"] == category]
