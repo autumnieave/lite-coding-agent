@@ -139,4 +139,4 @@ flowchart LR
 | 项目记忆 | `src/agent/memory/agents_md.py` | 按层级加载 `AGENTS.md` 的「关键约束」并写入约束存储 | ✅ |
 | 会话持久化 | `src/agent/memory/session.py` | `session.jsonl` 追加写、消息历史 / token / 约束快照恢复 | ✅ |
 | 配置加载 | `src/agent/core/config.py` | 从 cwd 向上查找并加载 `.env` | ✅ |
-| MCP 客户端 | `src/agent/mcp/client.py` | 启动 stdio 子进程、JSON-RPC 握手、工具发现与调用 | 🚧 |
+| MCP 客户端 | `src/agent/mcp/client.py` | 启动 stdio 子进程、JSON-RPC 握手、工具发现与调用 | ✅ |
