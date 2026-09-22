@@ -35,3 +35,6 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 本地私有材料（不进仓库，只有本机有）
+private/
