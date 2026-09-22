@@ -1,7 +1,9 @@
 # Agent Benchmark 约定
 
-状态：📋 设计中。本文档先于 harness 定稿，harness 见 `scripts/benchmark.py`，
-结论落在 `docs/evidence.md`。
+状态：✅ 已落地。harness 见 `scripts/benchmark.py`，结论落在 `docs/evidence.md` 用例九。
+
+> 语境：本文的 benchmark 指**内部行为评测集**（任务自写、单模型、脚本化判定），用于本项目的开关对照；
+> **不是** MMLU / HumanEval / SWE-bench / Terminal-Bench 这类公开榜单，也不做跨模型排名。
 
 相关：`scripts/constraint_experiment.py`（约束保留对照实验）、`docs/evidence.md`（结论落点）。
 
@@ -10,7 +12,8 @@
 | 项 | 约定 |
 | --- | --- |
 | 评什么 | Agent 的**行为质量**：工具选择、参数准确、步数、错误恢复、约束遵守、长上下文召回 |
-| 不评什么 | 答案质量（引用可溯源、SQL 可编译这类由智能问数的五层评测负责）与模型本身的编码水平 |
+| 不评什么 | 答案质量（引用可溯源、SQL 可编译这类）与模型本身的编码水平 |
+| 和谁比 | 只和**本项目自己的开关档**比（`on` / `off`、修复前 / 修复后、不同档位）；不与其他项目、公开榜单或模型排名比较 |
 | 形态 | 独立脚本 `scripts/benchmark.py`，与 `constraint_experiment.py` 平行：互不 import、各自能单独跑 |
 | 复用 | 数据模型：record 字段、JSONL 落盘、`--resume` 跳过已跑、`--self-test` 离线自检、脚本化判定 + 聚合表 |
 | 不新建 | 不引入新依赖、不加联网 CI job（CI 只跑 `--self-test`） |

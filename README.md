@@ -171,7 +171,7 @@ lite-coding-agent/
 > 尚未纳入：Terminal-Bench 公开任务通过率。
 > 复现命令与完整逐次记录见 `docs/evidence.md` 用例五 ~ 用例七与 `docs/evidence/*.jsonl`。
 
-**Agent Benchmark**（`scripts/benchmark.py`，12 个任务 × 3 次，真实 `deepseek-flash`，判定脚本化；下表为 `on` 档）
+**Agent Benchmark（内部行为评测，非公开榜单）**（`scripts/benchmark.py`，12 个自写任务 × 3 次，真实 `deepseek-flash`，判定脚本化；用于本项目 on/off 对照，不做跨模型排名；下表为 `on` 档）
 
 评的是**行为质量**（工具选择、参数准确、步数预算、错误恢复、约束遵守、长上下文召回），不是答案质量。
 
