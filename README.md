@@ -2,7 +2,7 @@
 
 > 从零实现的终端 Coding Agent，不依赖 LangChain 等 Agent 框架。核心目标：在长任务中**不丢失关键约束**。
 
-**当前状态**：Agent Loop + 6 个内置工具 + 流式输出 + 四层上下文压缩 + 关键约束保留（压缩通道 + system prompt 通道 + MCP 执行层校验）+ 记忆系统（AGENTS.md 目录层级加载）+ 端到端会话 checkpoint + MCP 客户端（stdio）均已完成；交互式 REPL 见路线图；子 Agent 隔离评估后不做。各功能实现进度见「核心特性」与「路线图」。
+**当前状态**：Agent Loop + 6 个内置工具 + 流式输出 + 四层上下文压缩 + 关键约束保留（压缩通道 + system prompt 通道 + MCP 执行层校验）+ 记忆系统（AGENTS.md 目录层级加载）+ 端到端会话 checkpoint + MCP 客户端（stdio）均已完成。各功能实现进度见「核心特性」与「路线图」。
 
 ## 为什么做
 
@@ -25,11 +25,6 @@
 - ✅ **项目记忆**：按目录层级向上加载 `AGENTS.md`，C1–C5 解析为 `source=agents_md` 的约束，改文件后下一轮刷新
 - ✅ **会话持久化**：`session.jsonl` 逐轮追加，kill 后新进程能恢复消息历史 / token 计数 / 约束状态
 - ✅ **MCP 客户端（stdio）**：手写 JSON-RPC over stdio，`initialize` / `tools/list` / `tools/call` 全流程；发现的工具按 `mcp__<server>__<tool>` 注册进工具表。MCP 调用前额外过一道约束校验（本项目原创设计，见 ADR-018）
-
-**计划中：**
-
-- 📋 **交互式 REPL**：多轮对话（当前 `chat` 为单次执行）
-- 📋 **子 Agent 隔离**：独立上下文和工具白名单
 
 ## 架构图
 
@@ -142,7 +137,6 @@ lite-coding-agent/
 
 - [x] 项目脚手架与 CLI 入口
 - [x] Agent Loop + LLM Provider + 3 个基础工具（`lite-agent chat "任务"` 单次执行）
-- [ ] 交互式 REPL（多轮对话）
 - [x] 6 个核心工具 + 流式输出
 - [x] 四层上下文压缩
 - [x] 关键约束保留机制 + 对比实验
@@ -150,7 +144,6 @@ lite-coding-agent/
 - [x] 项目记忆 + checkpoint
 - [x] 单元测试 + GitHub Actions
 - [x] MCP 客户端（stdio + JSON-RPC，含执行层约束校验）
-- [ ] 子 Agent 隔离（暂不纳入：不在核心目标「约束保留」范围内，且会破坏 core 不导入 tools 的解耦边界，理由见 `docs/roadmap.md` Day 7）
 
 ## 评测
 
@@ -200,7 +193,6 @@ C 类另补了 `off` 档对照（关闭约束存储、压缩照常发生，每�
 - **约束来源未全覆盖**：对比实验只走「用户声明」一条路径，`source=agents_md` 没有进过实验数据。
 - **MCP 只支持 stdio**：没有 SSE / OAuth / 动态工具刷新 / 连接重试。
 - **执行层约束校验只看工具名、不看参数**：拦不住「用 echo 工具把 Key 回显出来」这类（ADR-018）。
-- **子 Agent 隔离未做**：评估后判定不在核心目标范围内，且与当前架构的解耦约束冲突，属于主动取舍，不是时间不够。
 - **退出时的上游 traceback**：`httpcore2` 关闭流的缺陷，不影响退出码、stdout 与文件改动（ADR-007）。
 - **MCP 端到端用例在高负载下偶发失败**：`tests/test_mcp_cli.py` 会真的拉起子进程，已标 `slow`、CI 单独 job 跑；本地 `pytest -q` 仍跑全部 516 条。
 
