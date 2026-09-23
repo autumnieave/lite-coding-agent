@@ -20,11 +20,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import locale
 import os
 import signal
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,6 +41,82 @@ TOOL_NAME_SEPARATOR = "__"
 
 DEFAULT_TIMEOUT_SECONDS = 15.0
 KILL_GRACE_SECONDS = 5.0
+
+SUPPORTED_PROTOCOL_VERSIONS = (PROTOCOL_VERSION,)
+"""本实现真正实现过语义的协议版本——只声明用得上的一档，不虚报。"""
+
+TOOL_CAPABILITY = "tools"
+
+ENV_ALLOWLIST = (
+    # Windows：拉起 cmd / npx / node 所需的最小集合
+    "PATH",
+    "PATHEXT",
+    "COMSPEC",
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "OS",
+    # 编码相关：python 子进程在 cp936 控制台下会按本地编码写 stdout，
+    # 不给这几个变量就可能写出非 UTF-8 的响应（实测症状见 ADR-017）
+    "PYTHONUTF8",
+    "PYTHONIOENCODING",
+    "LC_CTYPE",
+    # POSIX
+    "HOME",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TERM",
+)
+"""透传给 MCP server 子进程的环境变量白名单（大小写不敏感）。
+
+白名单外的键（首当其冲是 `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`）不会进子进程。
+改成白名单是因为默认整份透传时，第三方 server 能直接读到本机 LLM 凭据——实测症状见 ADR-017。
+"""
+
+
+def child_env(extra: Mapping[str, str] | None = None) -> dict[str, str]:
+    """构造子进程环境：白名单内的现有变量 + 调用方显式给的那几个。"""
+    allowed = {name.upper() for name in ENV_ALLOWLIST}
+    env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
+    if extra:
+        env.update(extra)
+    return env
+
+
+def decode_line(raw: bytes | str) -> str:
+    """把一行 stdout 解成文本：UTF-8 优先，解不出就退回本地编码，绝不抛异常。
+
+    stdio 传输按规范是 UTF-8，但「本地编码」很常见（Python 子进程在没有 `PYTHONUTF8`
+    的 cp936 控制台下就按 cp936 写）。读循环里抛异常会让整条连接静默挂到超时，
+    比解出一行乱码糟得多——所以宁可乱码也不抛。
+    """
+    if isinstance(raw, str):
+        return raw
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        for encoding in (locale.getpreferredencoding(False), "utf-8"):
+            try:
+                return raw.decode(encoding, errors="replace")
+            except LookupError:
+                continue
+        return raw.decode("utf-8", errors="replace")
 
 
 class McpError(RuntimeError):
@@ -59,6 +136,19 @@ class McpToolInfo:
     def full_name(self) -> str:
         """注册到本地用的三段式名字。"""
         return f"{TOOL_NAME_PREFIX}{self.server_name}{TOOL_NAME_SEPARATOR}{self.name}"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallOutcome:
+    """一次 `tools/call` 的结果。
+
+    `is_error` 对应协议里的 `result.isError`：请求本身成功、但**工具执行失败**
+    （例如文件不存在）。这与 JSON-RPC 层的 `error` 是两条不同的失败通道，
+    混在一起会让工具失败被记成成功（见 ADR-017）。
+    """
+
+    text: str
+    is_error: bool = False
 
 
 def _kill_process_tree(pid: int) -> None:
@@ -88,12 +178,14 @@ class McpConnection:
         env: dict[str, str] | None = None,
         *,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        on_event: Callable[[str], None] | None = None,
     ) -> None:
         self.server_name = server_name
         self.command = command
         self.args = tuple(args)
         self.env = dict(env or {})
         self.timeout = timeout
+        self._on_event = on_event
         self._process: asyncio.subprocess.Process | None = None
         self._reader: asyncio.Task[None] | None = None
         self._pending: dict[int, asyncio.Future[Any]] = {}
@@ -120,16 +212,20 @@ class McpConnection:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                env={**os.environ, **self.env},
+                env=child_env(self.env),
                 **extra,
             )
         except OSError as exc:
             raise McpError(f"无法启动 MCP server「{self.server_name}」：{exc}") from exc
         self._reader = asyncio.create_task(self._read_loop())
 
-    async def initialize(self) -> None:
-        """握手：协商版本，再发 `notifications/initialized` 确认客户端就绪。"""
-        await self._send_request(
+    def _emit(self, message: str) -> None:
+        if self._on_event is not None:
+            self._on_event(message)
+
+    async def initialize(self) -> dict[str, Any]:
+        """握手：协商版本、校验能力，再发 `notifications/initialized` 确认客户端就绪。"""
+        result = await self._send_request(
             "initialize",
             {
                 "protocolVersion": PROTOCOL_VERSION,
@@ -137,7 +233,51 @@ class McpConnection:
                 "clientInfo": {"name": CLIENT_NAME, "version": CLIENT_VERSION},
             },
         )
+        info = self._check_handshake(result)
         await self._send_notification("notifications/initialized")
+        return info
+
+    def _check_handshake(self, result: Any) -> dict[str, Any]:
+        """校验 initialize 的响应，返回 serverInfo。
+
+        三件事：版本必须在支持列表里（否则按规范断开，免得拿旧语义解析新协议）；
+        server 明确声明了能力却没有 `tools` 就直接拒绝；**没声明 capabilities 只告警**——
+        宽容解析不把不合规但能用的 server 拦死。
+        """
+        if not isinstance(result, dict):
+            raise McpError(
+                f"MCP server「{self.server_name}」的 initialize 响应不是对象：{result!r}"
+            )
+        version = result.get("protocolVersion")
+        if version not in SUPPORTED_PROTOCOL_VERSIONS:
+            raise McpError(
+                f"MCP server「{self.server_name}」要求协议版本 {version!r}，"
+                f"本客户端只实现 {', '.join(SUPPORTED_PROTOCOL_VERSIONS)}；"
+                "版本不匹配时断开，不按未知语义继续。"
+            )
+        capabilities = result.get("capabilities")
+        if capabilities is None:
+            self._emit(
+                f"警告：MCP server「{self.server_name}」未声明 capabilities，按「只支持 tools」继续"
+            )
+        elif not isinstance(capabilities, dict) or TOOL_CAPABILITY not in capabilities:
+            raise McpError(
+                f"MCP server「{self.server_name}」没有声明 tools 能力"
+                f"（capabilities={capabilities!r}），不注册任何工具。"
+            )
+        declared = capabilities.get(TOOL_CAPABILITY) if isinstance(capabilities, dict) else None
+        if isinstance(declared, dict) and declared.get("listChanged"):
+            self._emit(
+                f"提示：MCP server「{self.server_name}」声明了 tools.listChanged，"
+                "本实现不处理动态变更，工具表按首次发现固定"
+            )
+        info = result.get("serverInfo")
+        info = info if isinstance(info, dict) else {}
+        self._emit(
+            f"MCP server「{self.server_name}」握手完成："
+            f"{info.get('name', '未命名')} {info.get('version', '')}（协议 {version}）"
+        )
+        return info
 
     async def list_tools(self) -> list[McpToolInfo]:
         """发现 server 提供的工具。响应形状不对时返回空列表而不是报错。"""
@@ -160,8 +300,12 @@ class McpConnection:
             )
         return infos
 
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
-        """调用远端工具，把 `content` 里的文本片段拼接后返回。"""
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolCallOutcome:
+        """调用远端工具。
+
+        JSON-RPC 层的 `error` 抛 `McpError`；工具自身的失败（`result.isError`）走
+        `ToolCallOutcome.is_error`，由调用方回填成工具失败。
+        """
         result = await self._send_request("tools/call", {"name": name, "arguments": arguments})
         if isinstance(result, dict) and isinstance(result.get("content"), list):
             texts = [
@@ -169,9 +313,9 @@ class McpConnection:
                 for part in result["content"]
                 if isinstance(part, dict) and part.get("type") == "text"
             ]
-            if texts:
-                return "\n".join(texts)
-        return json.dumps(result, ensure_ascii=False)
+            text = "\n".join(texts) if texts else json.dumps(result, ensure_ascii=False)
+            return ToolCallOutcome(text=text, is_error=bool(result.get("isError")))
+        return ToolCallOutcome(text=json.dumps(result, ensure_ascii=False))
 
     async def close(self) -> None:
         """关闭连接：先让等待中的请求失败，再终止整棵进程树。"""
@@ -205,29 +349,37 @@ class McpConnection:
         process = self._process
         if process is None or process.stdout is None:
             return
-        while True:
-            line = await process.stdout.readline()
-            if not line:
-                break
-            try:
-                message = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(message, dict):
-                continue
-            message_id = message.get("id")
-            if message_id is None:
-                continue  # server 发来的通知，没有对应请求
-            future = self._pending.pop(message_id, None)
-            if future is None or future.done():
-                continue
-            error = message.get("error")
-            if isinstance(error, dict):
-                future.set_exception(
-                    McpError(f"MCP error {error.get('code')}: {error.get('message')}")
-                )
-            else:
-                future.set_result(message.get("result"))
+        try:
+            while True:
+                raw = await process.stdout.readline()
+                if not raw:
+                    break
+                try:
+                    message = json.loads(decode_line(raw))
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(message, dict):
+                    continue
+                message_id = message.get("id")
+                if message_id is None:
+                    continue  # server 发来的通知，没有对应请求
+                future = self._pending.pop(message_id, None)
+                if future is None or future.done():
+                    continue
+                error = message.get("error")
+                if isinstance(error, dict):
+                    future.set_exception(
+                        McpError(f"MCP error {error.get('code')}: {error.get('message')}")
+                    )
+                else:
+                    future.set_result(message.get("result"))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # 读循环异常退出会让所有等待中的请求一直挂到超时、且看不出原因，
+            # 所以必须把 pending 一次性失败掉（实测踩到的就是解码异常）。
+            self._fail_pending(McpError(f"MCP server「{self.server_name}」读循环异常：{exc!r}"))
+            return
         self._fail_pending(McpError(f"MCP server「{self.server_name}」已退出"))
 
     async def _send_request(self, method: str, params: dict[str, Any] | None = None) -> Any:
@@ -334,10 +486,12 @@ class McpTool:
             )
 
         try:
-            text = await self._connection.call_tool(self._info.name, payload)
+            outcome = await self._connection.call_tool(self._info.name, payload)
         except McpError as exc:
             return ToolResult.failure(f"MCP 工具调用失败：{exc}")
-        return ToolResult.success(text)
+        if outcome.is_error:
+            return ToolResult.failure(f"MCP 工具「{self._info.name}」执行失败：{outcome.text}")
+        return ToolResult.success(outcome.text)
 
     def _blocking_constraint(self) -> Constraint | None:
         """查一遍约束存储，看有没有禁止调用这个工具。"""
@@ -374,7 +528,9 @@ class McpClient:
         env: dict[str, str] | None = None,
     ) -> tuple[McpTool, ...]:
         """启动 server、握手、发现工具，返回这次新增的工具。失败抛 `McpError`。"""
-        connection = McpConnection(server_name, command, args, env, timeout=self._timeout)
+        connection = McpConnection(
+            server_name, command, args, env, timeout=self._timeout, on_event=self._on_event
+        )
         await connection.connect()
         try:
             await connection.initialize()
