@@ -15,6 +15,7 @@
 | Day 6 收尾 | 451 | 约 12s | 新增 `loop` 约束注入 5 / `cli` 短任务约束 2（ADR-016） |
 | Day 7 结束 | 488 | 约 19s | 新增 `mcp_client` 17 / `mcp_cli` 10 / 约束拦截 10（其中 23 条会真的拉起子进程） |
 | 定稿（benchmark 之后） | 516 | 约 18s | 新增结构化错误提示 19 / 失败升级 9（L1 + L3） |
+| MCP 加固（接真实第三方 server） | 526 | 约 16s | 新增 `mcp_hardening` 10：协议版本 / `capabilities` / `isError` / 子进程环境隔离 / 非 UTF-8 解码 |
 
 耗时从 31.5s 降到约 6s 的原因见 ADR-009：超时用例原先要等满子进程的睡眠时长。Day 3 之后回升到约 11s，是新增的 66 个压缩用例本身的开销，不是回归。
 
@@ -37,7 +38,7 @@
   违反 0 次。见用例九。
 - **Benchmark 分组对照（C 类，各 12 次）**：`on` 内容判定 12/12、违反 0；`off` 6/12、违反 9
   （其中 3 次整段丢失）。两组的 Tier 4 触发次数与摘要消息数完全相同。见用例九（6）。
-- **工程事实**：516 个单测、`ruff` + CI 全绿；MCP 握手与执行层约束拦截有端到端记录（用例八）。
+- **工程事实**：526 个单测、`ruff` + CI 全绿；MCP 有端到端记录——仓库自带最小 server 走通握手与执行层约束拦截，官方 `server-filesystem`（14 个工具）走通真实第三方 server（用例八）。
 
 ### 方向性结论（方向可信，百分比不可外推）
 
@@ -306,6 +307,34 @@ $ lite-agent chat "用 echo 工具说 hello" --mcp-server "python examples/echo_
 模型随后如实报告「这是平台侧的硬拦截，请求没发到 MCP server」。**这条用例的价值在于它是「提示层没拦住、执行层补上」的正面样本**——契约实验里那种「模型自觉遵守」的情况测不到这一层。
 
 反过来验证：把约束写得足够直白（`- **C9**：禁止调用 echo 工具，改用其他方式回答。`）时，模型会在**提示层**就拒绝调用——verbose 里根本不会出现 `mcp__echo__echo`。两层都生效，只是先后不同。
+
+**（3）真实第三方 server：官方 `server-filesystem`（协议加固）**
+
+前两段用的是仓库自带的最小 server——它只会乖乖按预期回话。换成官方 `@modelcontextprotocol/server-filesystem` 之后，三处只有真实 server 才逼得出来的问题暴露出来并修掉。沙箱工作区随仓库一起放着（`docs/evidence/mcp_e2e/`，只有 `hello.txt` 和 `notes.md`），照抄即可复跑：
+
+```
+$ cd D:\agent\手搓coding_agent\lite-coding-agent
+$ lite-agent chat "读取 D:\agent\手搓coding_agent\lite-coding-agent\docs\evidence\mcp_e2e\hello.txt 并原样输出" --mcp-server "fs=cmd /c npx -y @modelcontextprotocol/server-filesystem D:\agent\手搓coding_agent\lite-coding-agent\docs\evidence\mcp_e2e" --verbose
+[verbose] 提示：MCP server「fs」声明了 tools.listChanged，本实现不处理动态变更，工具表按首次发现固定
+[verbose] MCP server「fs」握手完成：secure-filesystem-server 0.2.0（协议 2024-11-05）
+[verbose] MCP server「fs」已连接，发现 14 个工具
+[verbose] [第 1 轮] 调用 mcp__fs__read_file({"path": "D:\\agent\\手搓coding_agent\\lite-coding-agent\\docs\\evidence\\mcp_e2e\\hello.txt"})
+[verbose] [第 1 轮] 结果 mcp__fs__read_file -> 成功：MCPE2E-20260923
+```
+
+退出码 0，stdout 只有 `MCPE2E-20260923`。发现 14 个工具：`read_file` / `read_text_file` / `read_media_file` / `read_multiple_files` / `write_file` / `edit_file` / `create_directory` / `list_directory` / `list_directory_with_sizes` / `directory_tree` / `move_file` / `search_files` / `get_file_info` / `list_allowed_directories`。
+
+三处修复的前后对照：
+
+| 症状 | 修复前 | 修复后 |
+|---|---|---|
+| 工具执行失败被记成成功 | 读一个不存在的文件时 `ToolResult.ok = True`，`ENOENT ...` 当成正常内容回填 | `ok = False`，回填 `MCP 工具「read_file」执行失败：ENOENT: no such file or directory ...` |
+| 第三方 server 能读到本机凭据 | 子进程可见 `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | 子进程可见：无（白名单外的键一律不传） |
+| 非 UTF-8 stdout 让连接静默挂死 | cp936 输出触发 `UnicodeDecodeError`，逃出了 `json.JSONDecodeError` 的捕获 → 读循环整体退出 → 请求挂到 15 秒超时 | `decode_line()` 兜底解码；读循环异常时一次性失败掉所有 `pending` 请求 |
+
+`create_subprocess_exec("npx", ...)` 在 Windows 上会报 `[WinError 2] 系统找不到指定的文件`（`npx` 是 `.cmd` / `.ps1` 包装脚本），必须写成 `cmd /c npx`。
+
+新增 `tests/test_mcp_hardening.py` 10 条把上述行为固定住：协议版本不匹配则断开、缺 `capabilities` 只告警、声明了能力却没有 `tools` 则拒绝、`isError` 映射成工具失败、`decode_line` 两种编码都能解、cp936 输出不再导致挂死、环境白名单不泄漏凭据。
 
 ### 用例九：Agent Benchmark 12 任务 × 3 次（行为评测）
 

@@ -401,18 +401,32 @@
 
 **Claude Code 原始设计**：用 `@anthropic-ai/sdk` 内置的 MCP 客户端；支持 stdio + SSE 两种传输与 OAuth 认证；工具以 `mcp__serverName__toolName` 注册；配置从用户级 / 项目级 `settings.json` 与 `.mcp.json` 三处读取，后读覆盖先读；握手与工具发现各 15 秒超时；支持运行时动态刷新工具列表；首次 chat 时懒加载连接（`docs/12-mcp.md` 第 575-591 行）。
 **参考项目复现**：手写原始 JSON-RPC，不用 SDK；只支持 stdio；三段式命名与 Claude Code 一致；配置读 `~/.claude/settings.json` + `.claude/settings.json` + `.mcp.json`，跳过格式错误项；15 秒超时后静默跳过该 server；一次性工具发现；懒加载。实现见 `python/mini_claude/mcp_client.py` 的 `McpConnection` / `McpManager`（`docs/12-mcp.md` 第 290-530 行）。
-**本实现差异**：协议层与参考项目同构（手写 stdio + 三段式 + 一次性发现 + 懒加载不需要），差异集中在四处工程细节：
+**本实现差异**：协议层与参考项目同构（手写 stdio + 三段式 + 一次性发现 + 懒加载不需要），差异集中在五处工程细节：
 1. **请求登记时序**：参考项目 `_send_request` 先写 stdin、再登记 future，中间隔着一次 `await drain()`；响应若在 drain 期间返回，`_read_loop` 会因为 `pending` 里还没这个 id 而**直接丢弃**。本实现先登记再写，消除这个竞态。
 2. **进程终止**：参考项目 `close()` 只 `kill()` 直接子进程，server 若自己 fork 了子进程会留下孤儿；本实现复用 ADR-009 的整棵树方案（Windows `taskkill /T /F`，POSIX `killpg`），并在 POSIX 上用独立会话启动，避免误伤自己。
 3. **stderr 处理**：参考项目给 stderr 开了 `PIPE` 却全程不读，server 写满管道缓冲区就会卡住；本实现直接 `DEVNULL`。
 4. **超时收尾**：参考项目把超时包在 `asyncio.wait_for` 外面，超时后相应 future 仍留在 `pending` 里等一个永远不来的响应；本实现超时后主动摘掉。
+5. **握手校验**：参考项目把 `initialize` 的响应直接丢掉，既不校验协议版本也不看 `capabilities`；本实现校验版本与自己真正实现过的能力，对不上就断开。
 
-**结果**：`tests/test_mcp_client.py` 14 条，全部用真实子进程（本地假 server 脚本，不发网络请求），覆盖握手、工具发现、参数转发、server 报错、非 JSON 日志行、超时、server 中途退出、注册表接入。
+**接真实第三方 server 后补的三处**
+
+上面五条来自读参考项目源码 + 按协议规范推演。把官方 `@modelcontextprotocol/server-filesystem` 真接进来跑通之后（Windows 上要写成 `cmd /c npx -y ...`），又逼出三处**只有真实 server 才会暴露**的问题——包括第 5 条只做到一半的地方：
+
+| 症状 | 根因 | 修法 |
+|---|---|---|
+| 读一个不存在的文件，工具却被记成**成功**，`ENOENT ...` 当成正常内容回填给模型 | `tools/call` 的响应有两条失败通道：JSON-RPC 的 `error`（协议层）与 `result.isError`（工具层）。原实现只认前者 | 新增 `ToolCallOutcome`，把 `isError` 映射成 `ToolResult.failure` |
+| MCP 子进程能读到 `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | 启动子进程用 `env={**os.environ, ...}`，等于把父进程整份环境（含本机凭据）交给第三方 server | 改成白名单 `child_env()`，只透传拉起解释器 / `cmd` / `npx` 和编码相关的变量 |
+| server 用非 UTF-8（cp936）写 stdout 时，连接**静默挂死**到 15 秒超时 | `_read_loop` 里 `json.loads(bytes)` 抛的是 `UnicodeDecodeError` 而不是 `json.JSONDecodeError`，没被捕获 → 读循环整体退出 → 所有 `pending` 请求再也等不到响应 | `decode_line()` 先按 UTF-8、解不出退回本地编码且绝不抛；读循环整体包一层，异常时一次性失败掉 `pending` |
+
+顺带记一条平台差异：`create_subprocess_exec("npx", ...)` 在 Windows 上直接报 `[WinError 2] 系统找不到指定的文件`——`npx` 是 `.cmd` / `.ps1` 包装脚本，得写成 `cmd /c npx` 才拉得起来。不影响协议实现，但换平台会撞上。
+
+**结果**：`tests/test_mcp_client.py` 17 条 + `tests/test_mcp_hardening.py` 10 条（`tests/test_mcp_cli.py` 另有 10 条 CLI 端到端），全部用真实子进程（本地假 server 脚本，不发网络请求），覆盖握手、工具发现、参数转发、server 报错、非 JSON 日志行、超时、server 中途退出、注册表接入，以及协议版本与 `capabilities` 校验、`isError` 语义、子进程环境隔离、非 UTF-8 解码。
 
 **已知边界**：
 - 只支持 stdio，没有 SSE / OAuth，也没有 Claude Code 的动态工具刷新。
 - 工具列表一次性发现，server 后续变更不感知。
 - 一个 server 一个子进程，不做连接复用与重试；连接失败抛 `McpError`，由调用方决定是否跳过。
+- 协议版本只声明 `2024-11-05` 这一档：server 回别的版本直接断开，不按未知语义继续解析。
 
 ## ADR-018：MCP 工具调用前过一道约束校验【纯自研】
 

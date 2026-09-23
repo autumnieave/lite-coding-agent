@@ -194,7 +194,7 @@ C 类另补了 `off` 档对照（关闭约束存储、压缩照常发生，每�
 - **MCP 只支持 stdio**：没有 SSE / OAuth / 动态工具刷新 / 连接重试。
 - **执行层约束校验只看工具名、不看参数**：拦不住「用 echo 工具把 Key 回显出来」这类（ADR-018）。
 - **退出时的上游 traceback**：`httpcore2` 关闭流的缺陷，不影响退出码、stdout 与文件改动（ADR-007）。
-- **MCP 端到端用例在高负载下偶发失败**：`tests/test_mcp_cli.py` 会真的拉起子进程，已标 `slow`、CI 单独 job 跑；本地 `pytest -q` 仍跑全部 516 条。
+- **MCP 端到端用例在高负载下偶发失败**：`tests/test_mcp_cli.py` 会真的拉起子进程，已标 `slow`、CI 单独 job 跑；本地 `pytest -q` 仍跑全部 526 条。
 
 ## 参考
 
