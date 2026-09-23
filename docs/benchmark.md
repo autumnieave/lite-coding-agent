@@ -48,7 +48,7 @@ harness 内部仍有 `Step(label, text)`，`label ∈ setup/declare/fill/probe`�
 | 内容 | 位置 | 说明 |
 | --- | --- | --- |
 | 逐次记录 | `docs/evidence/benchmark_runs.jsonl` | 一行一次；`(task_id, group, run_id, profile)` 是续跑去重键 |
-| 汇总结论 | `docs/evidence.md`「用例六：Agent 行为 benchmark」 | harness 只打印 Markdown 表；落库由人确认后粘贴 |
+| 汇总结论 | `docs/evidence.md`「用例九：Agent Benchmark 12 任务 × 3 次（行为评测）」 | harness 只打印 Markdown 表；落库由人确认后粘贴 |
 | 复现命令 | `docs/evidence.md` 与 `README.md` 的评测段 | `--self-test` 与真跑两条命令都要写进去 |
 | 不入库 | tempfile 工作区、模型回复全文 | record 只留判定结果与必要的短摘录 |
 
@@ -135,10 +135,35 @@ benchmark 只测「能恢复」这一侧。
 
 分布：retrieval 4 个（A1–A4）、edit_exec 4 个（B1–B4）、long_context 4 个（C1–C4）。
 
+### 6.1 步数上限快照（复算 `within_steps` 用）
+
+`docs/evidence/benchmark_runs.jsonl` 里**没有** `steps_limit` 字段，只有 `max_turns`（LLM 轮数安全网），
+两者不是一回事——按 `steps ≤ max_turns` 复算会得到偏松的步数达标数。下表按 `build_tasks()` 抄录，
+口径是 `steps = len(tools_used)`（工具调用次数）、`within_steps = steps ≤ steps_limit`：
+
+| id | category | 步数上限 `steps_limit` | 轮数上限 `max_turns` | group |
+| --- | --- | ---: | ---: | --- |
+| A1 | retrieval | 6 | 8 | on |
+| A2 | retrieval | 3 | 8 | on |
+| A3 | retrieval | 6 | 8 | on |
+| A4 | retrieval | 2 | 8 | on |
+| B1 | edit_exec | 6 | 8 | on |
+| B2 | edit_exec | 6 | 8 | on |
+| B3 | edit_exec | 6 | 8 | on |
+| B4 | edit_exec | 6 | 8 | on |
+| C1 | long_context | —（无步数上限） | 6 | on/off |
+| C2 | long_context | —（无步数上限） | 6 | on/off |
+| C3 | long_context | —（无步数上限） | 6 | on/off |
+| C4 | long_context | —（无步数上限） | 6 | on/off |
+
+这张表是本节「不复制任务清单」原则的**唯一例外**：清单本身仍以代码为准，只把复算必需的
+`steps_limit` 抄一份（jsonl 缺该字段），改任务时必须同步。其余列（`capabilities` / 必需与允许工具 /
+会话步数 / 逐条脚本）现打 `--list-tasks`。
+
 ## 7. 实施顺序
 
 1. 本文档定稿（含 4 个待确认项拍板）
 2. 按本文档重出 12 个任务的清单
 3. 写 `scripts/benchmark.py`（`--self-test` 必须离线通过）
 4. 真跑：`--group both --runs N`
-5. 结论进 `docs/evidence.md` 用例六，复现命令同步进 README
+5. 结论进 `docs/evidence.md` 用例九，复现命令同步进 README
