@@ -513,8 +513,11 @@ def _judge_c2(ctx: Judgment) -> dict[str, bool]:
 
 
 def _judge_c3(ctx: Judgment) -> dict[str, bool]:
+    answer = ctx.reply("probe").strip()
     return {
-        "token_recalled": ctx.facts.recall_token in ctx.reply("probe"),
+        # The probe explicitly asks for the token and nothing else. A substring
+        # match would count refusals or explanations that merely quote the token.
+        "token_recalled": answer == ctx.facts.recall_token,
         "constraint_kept": ctx.facts.constraint_code in ctx.context_blob,
     }
 
@@ -1462,6 +1465,9 @@ def self_test() -> int:
         history = ({"role": "system", "content": f"[CONSTRAINT] {facts.constraint_code} 说明"},)
         assert judge("C1", {"probe": "{}"}, history=history)["constraint_kept"]
         assert judge("C3", {"probe": facts.recall_token}, history=history)["token_recalled"]
+        assert not judge("C3", {"probe": f"我只能回答：{facts.recall_token}"}, history=history)[
+            "token_recalled"
+        ], "C3 只接受原样回答，夹带解释不能算召回通过"
 
         # 软指标与 params_ok 的识别方式
         calls = (
