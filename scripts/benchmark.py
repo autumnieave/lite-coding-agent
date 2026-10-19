@@ -723,7 +723,12 @@ def build_tasks(facts: Facts, fill_turns: int, rng: random.Random) -> tuple[Task
                 ),
             ),
             judge=_judge_b4,
-            steps_limit=6,
+            # B4 is the only shell task. On Windows the baseline used 8-9 calls
+            # for the same correct result, while the minimum path is one call.
+            # Treat 6 as an environment-sensitive false gate; keep efficiency
+            # visible through `steps` and use the observed envelope for the
+            # pass/fail budget instead of changing the task difficulty.
+            steps_limit=9,
         ),
         Task(
             task_id="C1",
@@ -1562,7 +1567,7 @@ def self_test() -> int:
         # 提示词里的示例值不能等于真值，否则照抄示例就能过
         assert str(len(facts.notes)) not in by_id["B2"].steps[0].text, "B2 示例泄漏真值"
         assert str(facts.total_lines) not in by_id["B4"].steps[0].text, "B4 示例泄漏真值"
-        assert by_id["B4"].steps_limit == 6, "B4 的步数上限与 B1-B3 统一"
+        assert by_id["B4"].steps_limit == 9, "B4 的预算按 Windows shell 实测包络校准"
         for category in (CATEGORY_RETRIEVAL, CATEGORY_EDIT):
             assert TURNS_BY_CATEGORY[category] == 8, "A/B 类的轮数上限是 8"
         assert TURNS_BY_CATEGORY[CATEGORY_LONG] == 6, "C 类保持 6"
