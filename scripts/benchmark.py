@@ -30,12 +30,20 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from trace_utils import (  # noqa: E402
+    TraceRecorder,
+    TracingCompactor,
+    TracingProvider,
+    TracingRegistry,
+)
+
 from agent.core.compaction import SUMMARY_PREFIX, CompactionConfig, Compactor  # noqa: E402
 from agent.core.config import find_env_file, load_env_file  # noqa: E402
 from agent.core.constraints import (  # noqa: E402
     CONSTRAINT_MARKER,
     DEFAULT_FILENAME,
     ConstraintStore,
+    extract_declarations,
 )
 from agent.core.llm import BaseProvider, OpenAICompatProvider  # noqa: E402
 from agent.core.loop import (  # noqa: E402
@@ -126,6 +134,7 @@ TURNS_BY_CATEGORY = {
 C 类每步只读一个文件，6 轮足够。上限是安全网，效率由 `steps` 单独度量。"""
 """单步任务的轮数上限。4 太紧：模型多用几次工具就被截断，会把「没做完」误记成「做不对」。"""
 DEFAULT_OUT = Path("docs/evidence/benchmark_runs.jsonl")
+DEFAULT_TRACE_DIR = Path("private/traces/benchmark")
 
 TASK_IDS = ("A1", "A2", "A3", "A4", "B1", "B2", "B3", "B4", "C1", "C2", "C3", "C4")
 
@@ -790,6 +799,57 @@ def count_recalled(reply: str, constraints: Sequence[tuple[str, str]]) -> int:
     return sum(1 for code, _ in constraints if code in reply)
 
 
+CHECK_RULE_TEXT = {
+    "json_valid": "输出必须是合法 JSON",
+    "snake_case_keys": "JSON 的键名必须使用 snake_case",
+    "no_code_fence": "输出中不得出现 markdown 代码围栏",
+    "lowercase_name": "新建文件名必须全小写",
+    "code_in_new_file": "新建文件名必须全小写",
+}
+
+CHECK_STEP_LABELS = {
+    "json_valid": "probe_json",
+    "snake_case_keys": "probe_json",
+    "no_code_fence": "probe_repeat",
+    "token_recalled": "probe",
+    "constraint_kept": "probe",
+    "lowercase_name": "probe",
+    "code_in_new_file": "probe",
+}
+
+
+def constraint_ids_for_check(task: Task, check: str) -> list[str]:
+    if check == "token_recalled" or (check == "constraint_kept" and task.task_id == "C3"):
+        return [code for code, _ in task.constraints]
+    rule = CHECK_RULE_TEXT.get(check)
+    if rule is None:
+        return []
+    return [code for code, content in task.constraints if content == rule]
+
+
+def probe_step_label(task: Task, check: str) -> str:
+    label = CHECK_STEP_LABELS.get(check)
+    if label and any(step.label == label for step in task.steps):
+        return label
+    non_fill = [step.label for step in task.steps if step.label != "fill"]
+    return non_fill[-1] if non_fill else ""
+
+
+def build_evidence(task: Task, checks: Mapping[str, bool]) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    for check, ok in checks.items():
+        if ok or check == "within_steps":
+            continue
+        evidence.append(
+            {
+                "check": check,
+                "step_label": probe_step_label(task, check),
+                "constraint_ids": constraint_ids_for_check(task, check),
+            }
+        )
+    return evidence
+
+
 async def run_task(
     task_id: str,
     *,
@@ -799,17 +859,59 @@ async def run_task(
     provider: BaseProvider,
     profile: str,
     max_turns: int | None,
+    rollout_index: int = 0,
+    trace_dir: Path | str | None = DEFAULT_TRACE_DIR,
+    sampling_config: Mapping[str, Any] | None = None,
+    sample_set: str | None = None,
 ) -> dict[str, Any]:
     rng = random.Random(seed)
     fill_turns = FILL_TURNS[profile]
     root = Path(tempfile.mkdtemp(prefix=f"bench-{task_id}-{group}-{run_id:02d}-"))
     started = time.perf_counter()
+    trace: TraceRecorder | None = None
+    trace_path: Path | None = None
     try:
         facts, snapshot = build_workspace(root, rng, fill_turns)
         tasks = build_tasks(facts, fill_turns, rng)
         task = next(item for item in tasks if item.task_id == task_id)
         # --max-turns 显式传了就用它，否则按类别取默认
         turn_cap = max_turns if max_turns is not None else TURNS_BY_CATEGORY[task.category]
+        effective_sampling = dict(
+            sampling_config
+            if sampling_config is not None
+            else getattr(provider, "sampling_config", {"is_default": True})
+        )
+
+        if trace_dir is not None:
+            trace_path = (
+                Path(trace_dir)
+                / profile
+                / group
+                / f"{task_id}_run{run_id:02d}_rollout{rollout_index:02d}.jsonl"
+            )
+            trace = TraceRecorder(
+                trace_path,
+                metadata={
+                    "experiment": "benchmark",
+                    "sample_set": sample_set
+                    or ("negative_control" if group == GROUP_OFF else "on_control"),
+                    "task_id": task.task_id,
+                    "run_id": run_id,
+                    "group": group,
+                    "profile": profile,
+                    "category": task.category,
+                    "capabilities": list(task.capabilities),
+                    "seed": seed,
+                    "fixture_seed": seed,
+                    "rollout_index": rollout_index,
+                    "max_turns": turn_cap,
+                    "constraints_total": len(task.constraints),
+                    "step_labels": [step.label for step in task.steps],
+                },
+                workspace=root,
+                constraints=task.constraints,
+                sampling_config=effective_sampling,
+            )
 
         # Q3：只有 long_context 才建约束存储；A/B 类不声明约束，off 组没有意义
         store = None
@@ -817,12 +919,19 @@ async def run_task(
             store = ConstraintStore(root / STATE_DIR / DEFAULT_FILENAME)
             store.load()
 
-        compactor = Compactor(
+        traced_provider: Any = TracingProvider(provider, trace) if trace is not None else provider
+        inner_compactor = Compactor(
             CompactionConfig(context_window=CONTEXT_WINDOW),
-            summarize=_summarizer(provider),
+            summarize=_summarizer(traced_provider),
             constraints=store,
         )
-        recorder = RecordingRegistry(build_default_registry(root))
+        compactor: Any = (
+            TracingCompactor(inner_compactor, trace) if trace is not None else inner_compactor
+        )
+        inner_registry: Any = build_default_registry(root)
+        if trace is not None:
+            inner_registry = TracingRegistry(inner_registry, trace)
+        registry_recorder = RecordingRegistry(inner_registry)
         escalations = 0
         escalated: list[str] = []
 
@@ -835,8 +944,8 @@ async def run_task(
             return True
 
         loop = AgentLoop(
-            provider,
-            recorder,
+            traced_provider,
+            registry_recorder,
             max_turns=turn_cap,
             compactor=compactor,
             constraints=store,
@@ -845,16 +954,22 @@ async def run_task(
 
         history: list[dict[str, Any]] = []
         replies: dict[str, str] = {}
+        declared_ids: set[str] = set()
         llm_calls = 0
         aborted = False
         stopped: list[str] = []
-        for step in task.steps:
+        for step_index, step in enumerate(task.steps, start=1):
+            if trace is not None:
+                trace.set_step(step_index, step.label, declared_ids=sorted(declared_ids))
             result = await loop.run(step.text, history=history)
             history = [dict(item) for item in result.messages]
             llm_calls += result.turns
             stopped.append(result.stopped_reason)
             if step.label != "fill":
                 replies[step.label] = result.content
+            declared_ids.update(code for code, _ in extract_declarations(step.text))
+            if trace is not None:
+                trace.end_step()
             if result.stopped_reason == ABORTED_BY_USER:
                 aborted = True
                 break
@@ -864,14 +979,14 @@ async def run_task(
             root=root,
             snapshot=snapshot,
             replies=replies,
-            calls=tuple(recorder.calls),
+            calls=tuple(registry_recorder.calls),
             history=tuple(history),
             escalations=escalations,
             aborted=aborted,
         )
         checks = dict(task.judge(judgment))
         if task.steps_limit is not None:
-            checks["within_steps"] = len(recorder.calls) <= task.steps_limit
+            checks["within_steps"] = len(registry_recorder.calls) <= task.steps_limit
         observations = dict(task.observe(judgment)) if task.observe is not None else {}
         observations["reply_head"] = _reply_head(replies)
         # 被轮数上限截断的 run 不能静默当成任务失败：单独标出来（见 docs/benchmark.md §1）
@@ -879,7 +994,7 @@ async def run_task(
         observations["stopped_reasons"] = sorted(set(stopped))
         observations["escalated_tools"] = escalated
 
-        used = [call.name for call in recorder.calls]
+        used = [call.name for call in registry_recorder.calls]
         preserved, verbatim = count_preserved(history, task.constraints)
         counts = compactor.stats.counts
         summary_messages = sum(
@@ -887,12 +1002,41 @@ async def run_task(
             for item in history
             if item.get("role") == "system" and SUMMARY_PREFIX in str(item.get("content") or "")
         )
+        duration = round(time.perf_counter() - started, 1)
+        trace_display = ""
+        if trace_path is not None:
+            try:
+                trace_display = trace_path.resolve().relative_to(Path.cwd().resolve()).as_posix()
+            except ValueError:
+                trace_display = trace_path.as_posix()
+        if trace is not None:
+            trace.end_run(
+                checks=checks,
+                evidence=build_evidence(task, checks),
+                step_replies=replies,
+                duration_s=duration,
+                extras={
+                    "preserved": preserved,
+                    "preserved_verbatim": verbatim,
+                    "replenished": compactor.stats.replenished,
+                    "codes_recalled": count_recalled(
+                        replies.get("probe_codes", ""), task.constraints
+                    ),
+                    "tiers_triggered": counts,
+                    "summary_messages": summary_messages,
+                    "llm_calls": llm_calls,
+                    "stopped_reasons": sorted(set(stopped)),
+                },
+            )
         return {
             "run_id": run_id,
+            "rollout_index": rollout_index,
             "max_turns": turn_cap,
             "group": group,
             "profile": profile,
             "seed": seed,
+            "sampling_config": effective_sampling,
+            "trace_path": trace_display,
             "task_id": task.task_id,
             "category": task.category,
             "capabilities": list(task.capabilities),
@@ -901,7 +1045,7 @@ async def run_task(
             "tools_used": used,
             "tool_selection_ok": set(task.required_tools) <= set(used) <= set(task.allowed_tools),
             "params_ok": not judgment.param_errors,
-            "steps": len(recorder.calls),
+            "steps": len(registry_recorder.calls),
             "escalations": escalations,
             "aborted": aborted,
             "checks": checks,
@@ -917,9 +1061,11 @@ async def run_task(
             "summary_calls": counts.get("tier4", 0),
             "summary_messages": summary_messages,
             "llm_calls": llm_calls,
-            "duration_s": round(time.perf_counter() - started, 1),
+            "duration_s": duration,
         }
     finally:
+        if trace is not None:
+            trace.close()
         shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1059,48 +1205,86 @@ def load_records(path: Path, profile: str) -> list[dict[str, Any]]:
     return records
 
 
+def parse_run_ids(raw: str, runs: int) -> list[int]:
+    if not raw.strip():
+        return list(range(1, runs + 1))
+    result: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            run_id = int(part)
+        except ValueError as exc:
+            raise ValueError(f"非法 run id：{part}") from exc
+        if run_id < 1:
+            raise ValueError(f"run id 必须 >= 1：{run_id}")
+        if run_id not in result:
+            result.append(run_id)
+    if not result:
+        raise ValueError("--run-ids 不能为空")
+    return result
+
+
 async def main_async(args: argparse.Namespace) -> int:
-    if args.runs < 1:
-        print("--runs 必须大于等于 1", file=sys.stderr)
+    if args.runs < 1 or args.rollouts < 1:
+        print("--runs 与 --rollouts 必须大于等于 1", file=sys.stderr)
         return 2
     unknown = [item for item in args.tasks if item not in TASK_IDS]
     if unknown:
         print(f"未知任务：{unknown}；可选 {list(TASK_IDS)}", file=sys.stderr)
         return 2
+    try:
+        run_ids = parse_run_ids(args.run_ids, args.runs)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     env_path = find_env_file(Path.cwd())
     if env_path is not None:
         load_env_file(env_path)
-    provider = OpenAICompatProvider.from_env()
+    provider = OpenAICompatProvider.from_env(
+        temperature=args.sampling_temperature,
+        top_p=args.sampling_top_p,
+        seed=args.sampling_seed,
+    )
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     prior = load_records(out_path, args.profile) if args.resume else []
     done = {
-        (str(item.get("task_id")), str(item.get("group")), int(item.get("run_id", 0)))
+        (
+            str(item.get("task_id")),
+            str(item.get("group")),
+            int(item.get("run_id", 0)),
+            int(item.get("rollout_index", 0)),
+        )
         for item in prior
     }
     if done:
         print(f"[resume] 已有 {len(done)} 次记录，跳过这些组合", flush=True)
 
-    jobs: list[tuple[str, str, int, int]] = []
+    jobs: list[tuple[str, str, int, int, int]] = []
     for group in args.groups:
         for task_id in args.tasks:
             # Q3：A/B 类不跑 off 组，避免同一结果跑两遍
             if group == GROUP_OFF and category_of(task_id) != CATEGORY_LONG:
                 continue
-            for run_id in range(1, args.runs + 1):
-                if (task_id, group, run_id) in done:
-                    continue
+            for run_id in run_ids:
                 seed = args.seed + run_id * 1000 + GROUPS.index(group)
-                jobs.append((task_id, group, run_id, seed))
+                for rollout_index in range(args.rollouts):
+                    if (task_id, group, run_id, rollout_index) in done:
+                        continue
+                    jobs.append((task_id, group, run_id, seed, rollout_index))
     if not jobs:
         print("[resume] 没有待跑的任务，直接汇总。", flush=True)
 
     semaphore = asyncio.Semaphore(args.concurrency)
     records: list[dict[str, Any]] = list(prior)
 
-    async def worker(task_id: str, group: str, run_id: int, seed: int) -> dict[str, Any]:
+    async def worker(
+        task_id: str, group: str, run_id: int, seed: int, rollout_index: int
+    ) -> dict[str, Any]:
         async with semaphore:
             return await run_task(
                 task_id,
@@ -1110,6 +1294,9 @@ async def main_async(args: argparse.Namespace) -> int:
                 provider=provider,
                 profile=args.profile,
                 max_turns=args.max_turns,
+                rollout_index=rollout_index,
+                trace_dir=args.trace_dir,
+                sampling_config=provider.sampling_config,
             )
 
     try:
@@ -1127,7 +1314,10 @@ async def main_async(args: argparse.Namespace) -> int:
     order = {task_id: index for index, task_id in enumerate(TASK_IDS)}
     records.sort(key=lambda item: (item["group"], order.get(item["task_id"], 99), item["run_id"]))
     print(aggregate(records))
-    print(f"\n逐次记录：{out_path}")
+    print(f"采样配置：{provider.sampling_config}")
+    print(f"逐次记录：{out_path}")
+    if args.trace_dir:
+        print(f"trace 目录：{args.trace_dir}")
     return 0
 
 
@@ -1374,6 +1564,17 @@ def self_test() -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Agent Benchmark：12 个任务的行为评测")
     parser.add_argument("--runs", type=int, default=1, help="每个任务每组跑几次，默认 %(default)s")
+    parser.add_argument(
+        "--run-ids",
+        default="",
+        help="只跑指定 run id，逗号分隔，例如 1,2,3；传了就忽略 --runs 的范围",
+    )
+    parser.add_argument(
+        "--rollouts",
+        type=int,
+        default=1,
+        help="每个 run 用同一采样配置重复几次，默认 %(default)s",
+    )
     parser.add_argument("--tasks", default=",".join(TASK_IDS), help="逗号分隔的任务号，默认全部")
     parser.add_argument(
         "--group",
@@ -1387,7 +1588,15 @@ def build_parser() -> argparse.ArgumentParser:
         default="standard",
         help="档位：standard 12 轮填充 / stress 14 轮，默认 %(default)s",
     )
-    parser.add_argument("--seed", type=int, default=20260921, help="随机种子基数")
+    parser.add_argument("--seed", type=int, default=20260921, help="夹具随机种子基数")
+    parser.add_argument(
+        "--sampling-temperature",
+        type=float,
+        default=None,
+        help="LLM temperature；不传则保持旧 payload（不发送该字段）",
+    )
+    parser.add_argument("--sampling-top-p", type=float, default=None, help="LLM top_p")
+    parser.add_argument("--sampling-seed", type=int, default=None, help="LLM seed")
     parser.add_argument("--concurrency", type=int, default=3, help="并发任务数")
     parser.add_argument(
         "--max-turns",
@@ -1397,9 +1606,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--out", default=str(DEFAULT_OUT), help="逐次记录写入的 JSONL 路径")
     parser.add_argument(
+        "--trace-dir",
+        default=str(DEFAULT_TRACE_DIR),
+        help="每个 rollout 的 trace 目录；默认 %(default)s",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
-        help="跳过 --out 里已落盘的 (task_id, group, run_id)，汇总含旧记录",
+        help="跳过 --out 里已经落盘的 (task_id, group, run_id, rollout)，汇总含旧记录",
     )
     parser.add_argument(
         "--list-tasks",
