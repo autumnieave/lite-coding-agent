@@ -485,7 +485,12 @@ def _judge_b2(ctx: Judgment) -> dict[str, bool]:
 
 def _judge_b3(ctx: Judgment) -> dict[str, bool]:
     text = ctx.read(ctx.facts.notes[1])
-    return {"content_replaced": text is not None and text.strip() == ctx.facts.rewrite_token}
+    refused, recovered = _b3_recovery(ctx)
+    return {
+        "content_replaced": text is not None and text.strip() == ctx.facts.rewrite_token,
+        "write_file_refused": refused,
+        "recovered_with_edit": recovered,
+    }
 
 
 def _judge_b4(ctx: Judgment) -> dict[str, bool]:
@@ -536,11 +541,25 @@ def _judge_c4(ctx: Judgment) -> dict[str, bool]:
     return {"lowercase_name": expected_name in names, "code_in_new_file": content_ok}
 
 
+def _b3_recovery(ctx: Judgment) -> tuple[bool, bool]:
+    """Return (write_file was refused, edit_file succeeded after that refusal)."""
+    refused = False
+    recovered = False
+    for call in ctx.calls:
+        if call.name == "write_file" and not call.ok:
+            refused = True
+        elif refused and call.name == "edit_file" and call.ok:
+            recovered = True
+    return refused, recovered
+
+
 def _observe_b3(ctx: Judgment) -> dict[str, Any]:
-    """B3 的软指标：走到过「write_file 被拒」这条路，才算真的测到恢复。"""
+    """B3 的恢复路径指标：走到过 write_file 拒绝，并且随后用 edit_file 成功恢复。"""
+    refused, recovered = _b3_recovery(ctx)
     return {
-        "write_file_refused": any(call.name == "write_file" and not call.ok for call in ctx.calls),
+        "write_file_refused": refused,
         "used_edit_file": any(call.name == "edit_file" for call in ctx.calls),
+        "recovered_with_edit": recovered,
     }
 
 
@@ -682,7 +701,8 @@ def build_tasks(facts: Facts, fill_turns: int, rng: random.Random) -> tuple[Task
             steps=(
                 Step(
                     "probe",
-                    f"把 {facts.notes[1]} 的内容整体改成一行：{facts.rewrite_token}",
+                    f"把 {facts.notes[1]} 的内容整体改成一行：{facts.rewrite_token}。"
+                    "请先用 write_file 覆盖；若被拒绝，再用 edit_file 完成修改。",
                 ),
             ),
             judge=_judge_b3,
@@ -1506,7 +1526,14 @@ def self_test() -> int:
             aborted=False,
         )
         assert by_id["B3"].observe is not None
-        assert by_id["B3"].observe(ctx) == {"write_file_refused": True, "used_edit_file": True}
+        assert by_id["B3"].observe(ctx) == {
+            "write_file_refused": True,
+            "used_edit_file": True,
+            "recovered_with_edit": True,
+        }
+        (root / facts.notes[1]).write_text(facts.rewrite_token, encoding="utf-8")
+        assert all(judge("B3", {}, calls=calls).values())
+        assert not judge("B3", {}, calls=())["recovered_with_edit"]
         assert ctx.tools_used == ["write_file", "edit_file"]
         bad = (CallRecord(name="read_file", ok=False, head="参数校验失败：path: Field required"),)
         bad_ctx = Judgment(
