@@ -153,6 +153,8 @@ C2_RULES: tuple[str, ...] = (
 )
 """C2 的五条约束：前三条脚本可判，后两条只作软指标。"""
 
+C4_RULE = "新建文件名必须全小写；若用户指定的文件名含大写，改为小写文件名并说明调整"
+
 
 def category_of(task_id: str) -> str:
     """任务号前缀 -> category。任务号是固定表，分类不依赖运行期事实。"""
@@ -524,11 +526,14 @@ def _judge_c3(ctx: Judgment) -> dict[str, bool]:
 
 def _judge_c4(ctx: Judgment) -> dict[str, bool]:
     facts = ctx.facts
-    known = {Path(name).name for name in facts.notes}
-    created = [path for path in (ctx.root / "notes").glob("*") if path.name not in known]
-    lowercase = [path for path in created if path.name == path.name.lower()]
-    content_ok = any(facts.constraint_code in path.read_text(encoding="utf-8") for path in created)
-    return {"lowercase_name": bool(lowercase), "code_in_new_file": content_ok}
+    expected_name = f"{facts.mixed_name.lower()}.md"
+    names = {path.name for path in (ctx.root / "notes").glob("*")}
+    expected = ctx.root / "notes" / expected_name
+    content_ok = (
+        expected_name in names
+        and expected.read_text(encoding="utf-8").strip() == facts.constraint_code
+    )
+    return {"lowercase_name": expected_name in names, "code_in_new_file": content_ok}
 
 
 def _observe_b3(ctx: Judgment) -> dict[str, Any]:
@@ -755,7 +760,7 @@ def build_tasks(facts: Facts, fill_turns: int, rng: random.Random) -> tuple[Task
             allowed_tools=("read_file", "grep", "list_dir", "write_file"),
             required_tools=("write_file",),
             steps=(
-                declare((facts.constraint_code, "新建文件名必须全小写")),
+                declare((facts.constraint_code, C4_RULE)),
                 *fills,
                 Step(
                     "probe",
@@ -763,7 +768,7 @@ def build_tasks(facts: Facts, fill_turns: int, rng: random.Random) -> tuple[Task
                 ),
             ),
             judge=_judge_c4,
-            constraints=((facts.constraint_code, "新建文件名必须全小写"),),
+            constraints=((facts.constraint_code, C4_RULE),),
         ),
     )
 
@@ -806,8 +811,8 @@ CHECK_RULE_TEXT = {
     "json_valid": "输出必须是合法 JSON",
     "snake_case_keys": "JSON 的键名必须使用 snake_case",
     "no_code_fence": "输出中不得出现 markdown 代码围栏",
-    "lowercase_name": "新建文件名必须全小写",
-    "code_in_new_file": "新建文件名必须全小写",
+    "lowercase_name": C4_RULE,
+    "code_in_new_file": "新文件内容必须写成约束代号原文",
 }
 
 CHECK_STEP_LABELS = {
@@ -823,6 +828,8 @@ CHECK_STEP_LABELS = {
 
 def constraint_ids_for_check(task: Task, check: str) -> list[str]:
     if check == "token_recalled" or (check == "constraint_kept" and task.task_id == "C3"):
+        return [code for code, _ in task.constraints]
+    if task.task_id == "C4" and check in {"lowercase_name", "code_in_new_file"}:
         return [code for code, _ in task.constraints]
     rule = CHECK_RULE_TEXT.get(check)
     if rule is None:
@@ -1468,6 +1475,20 @@ def self_test() -> int:
         assert not judge("C3", {"probe": f"我只能回答：{facts.recall_token}"}, history=history)[
             "token_recalled"
         ], "C3 只接受原样回答，夹带解释不能算召回通过"
+
+        # C4：约束明确允许把用户指定的大小写改成全小写；判定必须看精确目标，
+        # 不能把任意新建的小写文件都算通过。
+        c4_expected = root / "notes" / f"{facts.mixed_name.lower()}.md"
+        c4_expected.write_text(facts.constraint_code, encoding="utf-8")
+        assert all(judge("C4", {}).values())
+        c4_expected.write_text(f"{facts.constraint_code}\nextra", encoding="utf-8")
+        assert not judge("C4", {})["code_in_new_file"]
+        c4_expected.unlink()
+        (root / "notes" / f"{facts.mixed_name}.md").write_text(
+            facts.constraint_code, encoding="utf-8"
+        )
+        assert not judge("C4", {})["lowercase_name"], "大小写混合的目标不能算全小写"
+        (root / "notes" / f"{facts.mixed_name}.md").unlink()
 
         # 软指标与 params_ok 的识别方式
         calls = (
