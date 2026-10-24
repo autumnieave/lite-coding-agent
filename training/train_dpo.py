@@ -15,6 +15,7 @@ from typing import Any
 
 from training.adapter_artifacts import validate_saved_adapter
 from training.config import load_config, validate_t4_config
+from training.sft_format import canonicalize_tool_arguments
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
@@ -37,6 +38,7 @@ def default_tool_schemas() -> list[dict[str, Any]]:
 
 
 def render_dpo_prompt(tokenizer: Any, messages: Sequence[Mapping[str, Any]]) -> str:
+    messages = canonicalize_tool_arguments(messages)
     try:
         return tokenizer.apply_chat_template(
             list(messages),
