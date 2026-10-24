@@ -225,6 +225,15 @@ def apply_staging_defaults(args: argparse.Namespace, smoke_task: str) -> argpars
     return args
 
 
+def _looks_like_hub_model_id(value: str) -> bool:
+    """Return True only for a relative ``namespace/model`` Hub id."""
+
+    if Path(value).is_absolute():
+        return False
+    parts = value.split("/")
+    return len(parts) == 2 and all(parts)
+
+
 def preflight_small_model(args: argparse.Namespace) -> dict[str, Any]:
     """Validate paths, runtime and GPU before starting vLLM."""
 
@@ -250,7 +259,7 @@ def preflight_small_model(args: argparse.Namespace) -> dict[str, Any]:
             missing_kind="tokenizer_config_missing",
             empty_kind="tokenizer_config_empty",
         )
-    elif "/" in args.model:
+    elif _looks_like_hub_model_id(args.model):
         if not args.allow_hub_model:
             raise ContractError(
                 "model_path_unverified",
