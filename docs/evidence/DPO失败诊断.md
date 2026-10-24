@@ -293,7 +293,42 @@ adapter 下载曾在 `IncompleteRead` 处断流两次；最终通过 Range 分�
 
 因此不再重推 T4，也不再调 `precompute_ref_batch_size=1`（1 已是最小 batch；TRL 仍拼成 2 行）。若继续 DPO，租 24GB 单卡是唯一有意义的硬门槛；本轮不租、不重推。
 
-## 7. 修复决策
+## 7. 租卡显存预算
+
+### 7.1 逐项估算（24GB 卡）
+
+以 v3 实测的 `2 × 3008 × 151,643` logits 为基准，`logits.log_softmax` 缓冲为
+`912,284,288 × 4 B = 3.40 GiB`。其余项目按保守上限估算：
+
+| 项目 | 保守估算 | 说明 |
+| --- | ---: | --- |
+| policy 4-bit 7B | 4.0 GB | NF4 权重 + train-v5 LoRA adapter |
+| reference 4-bit 7B | 0–4.0 GB | 代码复用同一 4-bit 基座并关闭 adapter；只有把 reference 当独立副本时才另计 4GB |
+| optimizer states | 1–2 GB | `paged_adamw_8bit`，只覆盖 LoRA 可训练参数 |
+| 激活值 | 4–6 GB | 3072 序列、batch 1、非重入 gradient checkpointing |
+| `logits.log_softmax` | 3.2–3.4 GB | 实测 shape 2 × 3008 × 151,643，FP32 |
+| CUDA context + 碎片 | 1–2 GB | 驱动、通信缓冲、allocator 碎片 |
+| **保守合计** | **17–21 GB** | 把 reference 单独计 4GB 的口径 |
+| **共享基座口径** | **13–17 GB** | reference 不另起副本；与 T4 实测 `14.44 GiB + 3.21 GiB ≈ 17.65 GiB` 的上界一致 |
+
+### 7.2 决策
+
+- **24GB 余量**：保守口径下剩余 **3–7 GB**，共享基座口径下剩余 **7–11 GB**；
+  两种口径都不低于 3GB 的预注册门槛。
+- **首选 24GB（RTX 3090，约 ¥1.32/h）**：只做一次 `max_steps=1` smoke，验证
+  `logits.log_softmax` 是否还 OOM。
+- **40GB（A100，约 ¥3.28/h）仅作 fallback**：24GB smoke OOM 后最多换 40GB 一次；
+  40GB 仍 OOM 才写“24GB/40GB 均不支持 3072 + 双 7B DPO”，随后关闭 DPO。
+- 不在 24GB 上反复调 batch size 或序列长度，不试 1024 序列。
+
+### 7.3 当前执行状态
+
+当前 Windows 环境只配置了 Kaggle 与 DashScope 凭据；`vastai`、`runpodctl`、`gcloud`、
+`aws`、`az` 均不存在，也没有 24GB/40GB 租卡接口。因此本轮**没有实际租卡、没有 GPU
+smoke、没有 DPO held-out 结果**。预算结论和止损规则已写死，执行记录见
+`docs/evidence/DPO结果.md`；不能把“未执行”写成“24GB 不支持”。
+
+## 8. 修复决策
 
 | 分支 | 决策 | 理由 |
 | --- | --- | --- |
@@ -309,11 +344,12 @@ adapter 下载曾在 `IncompleteRead` 处断流两次；最终通过 Range 分�
 3. 不再让 reference precompute 生成完整 `2 x seq_len x vocab` 的 FP32 logits 缓冲；需要改实现而不是只调 batch size；
 4. 先做 3 条 staging，确认 `errors=0`、至少 1 条 `task_success=true`，再谈全量。
 
-## 8. 成本与边界
+## 9. 成本与边界
 
 - v1：SFT 5070.6s，DPO 42.3s 后失败；
 - v2：SFT 5795.2s，DPO 60.0s 后失败；
 - v3：另起独立 smoke kernel（`max_steps=1`，不重训 SFT），DPO 阶段 106.7s 后在 reference precompute 0/45 失败；kernel 总计约 227.2s；
+- 租卡：0 个 session、0 元；当前环境没有租卡接口/凭据，24GB smoke 未执行；
 - 三轮都未执行 DPO held-out，未产生任何 DPO rollout 或 DPO adapter；
 - 本文对 v1/v2 只读；v3 只新增 SHA 校验、`max_steps` 与诊断字段，未改 DPO 配方，未改 `core/loop.py`、`compaction.py`、`constraints.py`。
 
