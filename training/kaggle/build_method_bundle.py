@@ -58,6 +58,9 @@ V5_REPO_FILES = (
     "private/dpo_v1/dpo_train.jsonl",
     "private/dpo_v1/dpo_val.jsonl",
     "private/dpo_v1/manifest.json",
+    "private/dpo_v2/dpo_train.jsonl",
+    "private/dpo_v2/dpo_val.jsonl",
+    "private/dpo_v2/manifest.json",
 )
 PY_ROOTS = ("src", "scripts", "training")
 

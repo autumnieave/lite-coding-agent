@@ -19,6 +19,8 @@ def build_kernel(
     experiment: str,
     train_version: str = "train-v4",
 ) -> dict[str, object]:
+    if experiment == "dpo_smoke_v3" and train_version != "train-v5":
+        raise ValueError("dpo_smoke_v3 requires train-v5")
     payload = base64.b64encode(zlib.compress(bundle_zip.read_bytes(), 9)).decode("ascii")
     template = Template(
         """from __future__ import annotations
@@ -44,7 +46,9 @@ REPO = Path("/kaggle/working/repo")
 MODEL = Path("/kaggle/temp/qwen2.5-7b-instruct")
 OUT = Path("/kaggle/working/method") / EXPERIMENT
 DATA = REPO / "$data_dir"
+DPO_DATA = REPO / "private/dpo_v2"
 TRAIN_VERSION = "$train_version"
+TRAIN_V5_ADAPTER_SHA256 = "f5b685d4da795a783fbcb21b15880daebfa08c64b1661792f7e2c6caab29fea7"
 TASKS = (
     "U-TR-A-C1-HARD,U-TR-B-CHECK-BASE,U-TR-B-C1-BASE,"
     "U-TR-B-CTX-HARD,U-TR-B-TOOL-HARD,U-TR-B-CONFLICT-WEAK"
@@ -115,6 +119,20 @@ def extract_bundle() -> None:
         archive.extractall(REPO)
     if str(REPO) not in sys.path:
         sys.path.insert(0, str(REPO))
+
+
+def find_adapter() -> Path:
+    candidates = sorted(Path("/kaggle/input").rglob("adapter_config.json"))
+    for config in candidates:
+        folder = config.parent
+        weights = [
+            path
+            for path in folder.glob("adapter_model.*")
+            if path.is_file() and path.stat().st_size > 0
+        ]
+        if weights:
+            return folder
+    raise FileNotFoundError("non-empty adapter not found under /kaggle/input")
 
 
 def install_and_model() -> None:
@@ -216,37 +234,51 @@ def train_sft(
     )
 
 
-def train_dpo(*, sft_adapter: Path, output_dir: Path) -> None:
-    run(
-        [
-            sys.executable,
-            str(REPO / "training/kaggle/method_runner.py"),
-            "--repo",
-            str(REPO),
-            "--mode",
-            "dpo",
-            "--config",
-            str(REPO / "training/configs/dpo_7b_t4.json"),
-            "--model-path",
-            str(MODEL),
-            "--train-file",
-            str(REPO / "private/dpo_v1/dpo_train.jsonl"),
-            "--val-file",
-            str(REPO / "private/dpo_v1/dpo_val.jsonl"),
-            "--init-adapter",
-            str(sft_adapter),
-            "--output-dir",
-            str(output_dir),
-            "--heldout-out-root",
-            str(OUT / "unused_heldout"),
-            "--heldout-trace-root",
-            str(OUT / "unused_traces"),
-            "--heldout-tasks",
-            TASKS,
-        ],
-        14400,
-        "train_dpo",
-    )
+def train_dpo(
+    *,
+    sft_adapter: Path,
+    output_dir: Path,
+    data_dir: Path,
+    max_steps: int | None = None,
+    expected_train_sha256: str | None = None,
+    expected_val_sha256: str | None = None,
+    expected_init_adapter_sha256: str | None = None,
+) -> None:
+    command = [
+        sys.executable,
+        str(REPO / "training/kaggle/method_runner.py"),
+        "--repo",
+        str(REPO),
+        "--mode",
+        "dpo",
+        "--config",
+        str(REPO / "training/configs/dpo_7b_t4.json"),
+        "--model-path",
+        str(MODEL),
+        "--train-file",
+        str(data_dir / "dpo_train.jsonl"),
+        "--val-file",
+        str(data_dir / "dpo_val.jsonl"),
+        "--init-adapter",
+        str(sft_adapter),
+        "--output-dir",
+        str(output_dir),
+        "--heldout-out-root",
+        str(OUT / "unused_heldout"),
+        "--heldout-trace-root",
+        str(OUT / "unused_traces"),
+        "--heldout-tasks",
+        TASKS,
+    ]
+    if max_steps is not None:
+        command += ["--max-steps", str(max_steps)]
+    if expected_train_sha256 is not None:
+        command += ["--expected-train-sha256", expected_train_sha256]
+    if expected_val_sha256 is not None:
+        command += ["--expected-val-sha256", expected_val_sha256]
+    if expected_init_adapter_sha256 is not None:
+        command += ["--expected-init-adapter-sha256", expected_init_adapter_sha256]
+    run(command, 14400, "train_dpo")
 
 
 def evaluate(*, adapter: Path, baseline_adapter: Path | None = None) -> dict:
@@ -376,8 +408,34 @@ def main() -> int:
             seed=SEED,
             label="train_sft_for_dpo",
         )
-        train_dpo(sft_adapter=sft_adapter, output_dir=dpo_adapter)
+        train_dpo(
+            sft_adapter=sft_adapter,
+            output_dir=dpo_adapter,
+            data_dir=REPO / "private/dpo_v1",
+        )
         comparison = evaluate(adapter=dpo_adapter, baseline_adapter=sft_adapter)
+    elif EXPERIMENT == "dpo_smoke_v3":
+        dpo_adapter = OUT / "dpo_adapter"
+        summary_adapter = dpo_adapter
+        sft_adapter = find_adapter()
+        status(
+            {
+                "status": "running",
+                "stage": "dpo_v3_version_check",
+                "experiment": EXPERIMENT,
+                "init_adapter": str(sft_adapter),
+                "data_dir": str(DPO_DATA),
+            }
+        )
+        train_dpo(
+            sft_adapter=sft_adapter,
+            output_dir=dpo_adapter,
+            data_dir=DPO_DATA,
+            max_steps=1,
+            expected_train_sha256="691ea2667893b483d02004e9f8af800a6978df2b9dba80d19a245f4098b43aed",
+            expected_val_sha256="4072a9fec7616e6df3e9a17ecafe30f0c404a6495da63204ca0f2413ec8466f2",
+            expected_init_adapter_sha256=TRAIN_V5_ADAPTER_SHA256,
+        )
     else:
         raise ValueError(f"unknown experiment: {EXPERIMENT}")
 
@@ -388,6 +446,12 @@ def main() -> int:
         if train_manifest_path.is_file()
         else {}
     )
+    if EXPERIMENT == "dpo_smoke_v3":
+        data_train_file = DPO_DATA / "dpo_train.jsonl"
+        data_val_file = DPO_DATA / "dpo_val.jsonl"
+    else:
+        data_train_file = DATA / "train.jsonl"
+        data_val_file = DATA / "val.jsonl"
     summary = {
         "status": "ok",
         "experiment": EXPERIMENT,
@@ -395,8 +459,9 @@ def main() -> int:
         "gpu": gpu,
         "duration_s": round(time.perf_counter() - started, 1),
         "train_version": TRAIN_VERSION,
-        "train_sha256": sha256(DATA / "train.jsonl"),
-        "val_sha256": sha256(DATA / "val.jsonl"),
+        "data_kind": "dpo_v2" if EXPERIMENT == "dpo_smoke_v3" else "sft",
+        "train_sha256": sha256(data_train_file),
+        "val_sha256": sha256(data_val_file),
         "train_manifest": train_manifest,
         "heldout": comparison,
         "adapter_sha256": sha256(summary_adapter / "adapter_model.safetensors"),
@@ -443,6 +508,9 @@ if __name__ == "__main__":
     )
     (out_dir / "run.py").write_text(code, encoding="utf-8")
     title_experiment = experiment.replace("_only", "")
+    kernel_sources = (
+        ["autumnsq/lite-agent-method-assistant-train-v5"] if experiment == "dpo_smoke_v3" else []
+    )
     metadata = {
         "id": kernel_id,
         "title": f"Lite Agent Method {title_experiment} {train_version}",
@@ -454,7 +522,7 @@ if __name__ == "__main__":
         "enable_internet": True,
         "dataset_sources": [],
         "competition_sources": [],
-        "kernel_sources": [],
+        "kernel_sources": kernel_sources,
     }
     (out_dir / "kernel-metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -483,7 +551,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kernel-id", required=True)
     parser.add_argument(
         "--experiment",
-        choices=("baseline", "baseline_seed2", "assistant_only", "mix15", "dpo"),
+        choices=("baseline", "baseline_seed2", "assistant_only", "mix15", "dpo", "dpo_smoke_v3"),
         required=True,
     )
     parser.add_argument("--train-version", choices=("train-v4", "train-v5"), default="train-v4")

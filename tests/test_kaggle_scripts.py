@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
 
 import training.kaggle.kaggle_constrained_decoding as constrained_module
+from training.kaggle.build_method_kernel import build_kernel
 from training.kaggle.contracts import ContractError
 from training.kaggle.kaggle_constrained_decoding import (
     apply_staging_defaults,
@@ -25,6 +27,44 @@ def test_constrained_decoding_defaults_to_fp16_on_t4() -> None:
     args = build_parser().parse_args([])
     assert args.quantize_4bit is False
     assert build_parser().parse_args(["--quantize-4bit"]).quantize_4bit is True
+
+
+def test_dpo_smoke_kernel_pins_train_v5_adapter_and_data(tmp_path: Path) -> None:
+    bundle = tmp_path / "repo.zip"
+    with zipfile.ZipFile(bundle, "w") as archive:
+        archive.writestr("README.md", "bundle")
+    out = tmp_path / "kernel"
+    build_kernel(
+        root=tmp_path,
+        bundle_zip=bundle,
+        out_dir=out,
+        kernel_id="owner/dpo-smoke",
+        experiment="dpo_smoke_v3",
+        train_version="train-v5",
+    )
+
+    metadata = json.loads((out / "kernel-metadata.json").read_text(encoding="utf-8"))
+    assert metadata["kernel_sources"] == ["autumnsq/lite-agent-method-assistant-train-v5"]
+    code = (out / "run.py").read_text(encoding="utf-8")
+    assert "private/dpo_v2" in code
+    assert "--max-steps" in code
+    assert "f5b685d4da795a783fbcb21b15880daebfa08c64b1661792f7e2c6caab29fea7" in code
+    assert "691ea2667893b483d02004e9f8af800a6978df2b9dba80d19a245f4098b43aed" in code
+
+
+def test_dpo_smoke_kernel_requires_train_v5(tmp_path: Path) -> None:
+    bundle = tmp_path / "repo.zip"
+    with zipfile.ZipFile(bundle, "w") as archive:
+        archive.writestr("README.md", "bundle")
+    with pytest.raises(ValueError, match="requires train-v5"):
+        build_kernel(
+            root=tmp_path,
+            bundle_zip=bundle,
+            out_dir=tmp_path / "kernel",
+            kernel_id="owner/dpo-smoke",
+            experiment="dpo_smoke_v3",
+            train_version="train-v4",
+        )
 
 
 def test_constrained_decoding_dry_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -50,6 +51,7 @@ def test_dpo_config_precomputes_reference_log_probs_for_t4_memory() -> None:
     assert config.get("precompute_ref_log_probs") is True
     assert int(config["precompute_ref_batch_size"]) == 1
     assert int(config["max_seq_length"]) == 3072
+    assert int(config["max_prompt_length"]) == 3072
 
     captured: dict[str, object] = {}
 
@@ -144,6 +146,14 @@ def test_dpo_dry_run_records_sft_adapter_initialisation(tmp_path: Path) -> None:
     adapter_dir = tmp_path / "sft_adapter"
     adapter_dir.mkdir()
     (adapter_dir / "adapter_config.json").write_text("{}", encoding="utf-8")
+    (adapter_dir / "adapter_model.safetensors").write_bytes(b"weights")
+    (tmp_path / "manifest.json").write_text(
+        '{"version": "dpo-v2-preflight", "pair_count": 58, "train_pairs": 45, "val_pairs": 13}',
+        encoding="utf-8",
+    )
+
+    def sha(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
 
     manifest = run_dpo(
         config_path=Path("training/configs/dpo_7b_t4.json"),
@@ -153,9 +163,46 @@ def test_dpo_dry_run_records_sft_adapter_initialisation(tmp_path: Path) -> None:
         output_dir=tmp_path / "dpo",
         dry_run=True,
         init_adapter=adapter_dir,
+        max_steps=1,
+        expected_train_sha256=sha(train_file),
+        expected_val_sha256=sha(val_file),
+        expected_init_adapter_sha256=sha(adapter_dir / "adapter_model.safetensors"),
     )
 
     assert manifest["status"] == "dry_run"
     assert manifest["policy_init"] == "sft_adapter"
     assert manifest["reference_model"] == "base model with adapter disabled"
     assert manifest["init_adapter"] == str(adapter_dir)
+    assert manifest["init_adapter_sha256"] == sha(adapter_dir / "adapter_model.safetensors")
+    assert manifest["train_sha256"] == sha(train_file)
+    assert manifest["val_sha256"] == sha(val_file)
+    assert manifest["max_steps"] == 1
+    assert manifest["data_manifest"]["version"] == "dpo-v2-preflight"
+    assert manifest["precompute_ref_input_shape"]["configured_max_prompt_length"] == 3072
+    assert manifest["precompute_ref_input_shape"]["rows_per_pair_batch"] == 2
+    assert manifest["sha256_verified"] == {"train": True, "val": True, "init_adapter": True}
+
+
+def test_dpo_rejects_mismatched_expected_adapter_sha(tmp_path: Path) -> None:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    train_file = tmp_path / "train.jsonl"
+    val_file = tmp_path / "val.jsonl"
+    train_file.write_text("{}\n", encoding="utf-8")
+    val_file.write_text("{}\n", encoding="utf-8")
+    adapter_dir = tmp_path / "sft_adapter"
+    adapter_dir.mkdir()
+    (adapter_dir / "adapter_config.json").write_text("{}", encoding="utf-8")
+    (adapter_dir / "adapter_model.safetensors").write_bytes(b"weights")
+
+    with pytest.raises(ValueError, match="init adapter SHA-256"):
+        run_dpo(
+            config_path=Path("training/configs/dpo_7b_t4.json"),
+            model_path=model_dir,
+            train_file=train_file,
+            val_file=val_file,
+            output_dir=tmp_path / "dpo",
+            dry_run=True,
+            init_adapter=adapter_dir,
+            expected_init_adapter_sha256="0" * 64,
+        )

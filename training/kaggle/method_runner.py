@@ -57,6 +57,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="SFT adapter used to initialise DPO; also the DPO baseline adapter",
     )
+    parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument("--expected-train-sha256", default=None)
+    parser.add_argument("--expected-val-sha256", default=None)
+    parser.add_argument("--expected-init-adapter-sha256", default=None)
     return parser
 
 
@@ -113,6 +117,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir=output_dir,
             dry_run=bool(args.dry_run),
             init_adapter=init_adapter,
+            max_steps=args.max_steps,
+            expected_train_sha256=args.expected_train_sha256,
+            expected_val_sha256=args.expected_val_sha256,
+            expected_init_adapter_sha256=args.expected_init_adapter_sha256,
         )
 
     result: dict[str, Any] = {
@@ -124,6 +132,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "val_file": str(val_file),
         "heldout_tasks": heldout_tasks,
         "init_adapter": str(init_adapter) if init_adapter is not None else None,
+        "max_steps": args.max_steps,
+        "expected_sha256": {
+            "train": args.expected_train_sha256,
+            "val": args.expected_val_sha256,
+            "init_adapter": args.expected_init_adapter_sha256,
+        },
         "output_dir": str(output_dir),
         "run_manifest": run_manifest,
     }
