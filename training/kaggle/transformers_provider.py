@@ -30,6 +30,7 @@ class TransformersOfflineProvider(BaseProvider):
         max_tokens: int = 512,
         adapter_path: str | None = None,
         quantization: str = "nf4",
+        device_map: str | dict[str, int] | None = None,
     ) -> None:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -45,7 +46,7 @@ class TransformersOfflineProvider(BaseProvider):
         load_kwargs: dict[str, Any] = {
             # Keep inference on one GPU so it matches single-GPU QLoRA training
             # and avoids device_map sharding on Kaggle T4 x2 sessions.
-            "device_map": {"": 0},
+            "device_map": device_map if device_map is not None else {"": 0},
             "trust_remote_code": True,
         }
         if quantization == "nf4":

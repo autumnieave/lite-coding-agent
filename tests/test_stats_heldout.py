@@ -13,7 +13,7 @@ from scripts.unified_eval import (
     oracle_calls,
     oracle_reply,
 )
-from training.kaggle.stats_pilot import rollout_sampling, summarize_condition
+from training.kaggle.stats_pilot import parse_conditions, rollout_sampling, summarize_condition
 from training.stats_heldout import (
     PILOT_TASK_IDS,
     STATS_TASK_SPECS,
@@ -133,3 +133,10 @@ def test_rollout_sampling_uses_distinct_seed_only_when_sampling() -> None:
     assert greedy["seed"] == 20261019
     assert sampled["seed"] == 20261022
     assert provider.seed == 20261022
+
+
+def test_parse_conditions_allows_baseline_only_without_adapter() -> None:
+    assert parse_conditions("baseline", None) == ("baseline",)
+    with pytest.raises(ValueError, match="adapter-path"):
+        parse_conditions("baseline,sft", None)
+    assert parse_conditions("baseline,sft", "adapter") == ("baseline", "sft")

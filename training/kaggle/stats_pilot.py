@@ -23,9 +23,10 @@ from training.stats_heldout import PILOT_TASK_IDS, STATS_TASK_SPECS
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="stage-1.5 baseline/SFT pilot")
     parser.add_argument("--model-path", required=True)
-    parser.add_argument("--adapter-path", required=True)
+    parser.add_argument("--adapter-path", default=None)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--trace-dir", type=Path, required=True)
+    parser.add_argument("--conditions", default="baseline,sft")
     parser.add_argument("--tasks", default=",".join(PILOT_TASK_IDS))
     parser.add_argument("--rollouts", type=int, default=10)
     parser.add_argument("--limit", type=int, default=0)
@@ -36,6 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=None)
     parser.add_argument("--seed", type=int, default=20261019)
+    parser.add_argument("--device-map", default=None)
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--resume", action="store_true")
     return parser
@@ -70,6 +72,7 @@ def load_provider(args: argparse.Namespace, adapter_path: str | None) -> Any:
             max_tokens=args.max_tokens,
             adapter_path=adapter_path,
             quantization="nf4",
+            device_map=args.device_map,
         )
 
 
@@ -78,6 +81,33 @@ def _completed(path: Path) -> set[tuple[str, int]]:
         (str(row["task_id"]), int(row["rollout_index"]))
         for row in read_jsonl(path)
         if row.get("task_id") and row.get("rollout_index") is not None and not row.get("error_kind")
+    }
+
+
+def parse_conditions(raw: str, adapter_path: str | None) -> tuple[str, ...]:
+    conditions = tuple(item.strip() for item in raw.split(",") if item.strip())
+    if not conditions:
+        raise ValueError("at least one condition is required")
+    invalid = set(conditions) - {"baseline", "sft"}
+    if invalid:
+        raise ValueError(f"unknown conditions: {sorted(invalid)}")
+    if "sft" in conditions and not adapter_path:
+        raise ValueError("--adapter-path is required for the sft condition")
+    return conditions
+
+
+def gpu_memory_snapshot() -> dict[str, float] | None:
+    try:
+        import torch
+    except Exception:
+        return None
+    if not torch.cuda.is_available():
+        return None
+    return {
+        "allocated_gb": round(torch.cuda.memory_allocated() / 1024**3, 2),
+        "reserved_gb": round(torch.cuda.memory_reserved() / 1024**3, 2),
+        "peak_allocated_gb": round(torch.cuda.max_memory_allocated() / 1024**3, 2),
+        "peak_reserved_gb": round(torch.cuda.max_memory_reserved() / 1024**3, 2),
     }
 
 
@@ -118,6 +148,13 @@ async def run_condition(
         }
     assert provider is not None
     active_provider = provider
+    gpu_after_load = gpu_memory_snapshot()
+    try:
+        import torch
+
+        torch.cuda.reset_peak_memory_stats()
+    except Exception:
+        pass
 
     out_dir = args.out_dir / condition
     trace_dir = args.trace_dir / condition
@@ -193,6 +230,8 @@ async def run_condition(
     summary = summarize_condition(condition, all_rows, specs, expected_by_task)
     summary["duration_s"] = round(time.perf_counter() - started, 1)
     summary["adapter_path"] = adapter
+    summary["gpu_after_load"] = gpu_after_load
+    summary["gpu_peak_inference"] = gpu_memory_snapshot()
     summary["sampling"] = {
         "temperature": args.temperature,
         "top_p": args.top_p,
@@ -281,10 +320,14 @@ async def main_async(args: argparse.Namespace) -> int:
         raise ValueError("no matching stats tasks")
     args.out_dir.mkdir(parents=True, exist_ok=True)
     args.trace_dir.mkdir(parents=True, exist_ok=True)
+    conditions = parse_conditions(args.conditions, args.adapter_path)
 
     if args.preflight_only:
-        result: dict[str, Any] = {"tasks": [spec.task_id for spec in specs]}
-        for condition in ("baseline", "sft"):
+        result: dict[str, Any] = {
+            "tasks": [spec.task_id for spec in specs],
+            "conditions": list(conditions),
+        }
+        for condition in conditions:
             adapter = args.adapter_path if condition == "sft" else None
             try:
                 provider = load_provider(args, adapter)
@@ -303,10 +346,10 @@ async def main_async(args: argparse.Namespace) -> int:
             json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
         print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
-        return 0 if all(result[name]["status"] == "ok" for name in ("baseline", "sft")) else 2
+        return 0 if all(result[name]["status"] == "ok" for name in conditions) else 2
 
     summaries = {}
-    for condition in ("baseline", "sft"):
+    for condition in conditions:
         summaries[condition] = await run_condition(condition, specs=specs, args=args)
     output = {"tasks": [spec.task_id for spec in specs], "conditions": summaries}
     (args.out_dir / "pilot_summary.json").write_text(
