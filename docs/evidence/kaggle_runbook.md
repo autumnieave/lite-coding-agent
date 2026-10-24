@@ -356,4 +356,10 @@ DPO v3 不再让 kernel 重新训练 SFT，而是通过 `kernel_sources` 挂载
 
 **结论**：版本错配已被排除；T4 16GB 不支持“3072 序列 + 4-bit 7B + chosen/rejected
 双行完整词表 logits”。不重推 T4，不降到 1024，不再调 `precompute_ref_batch_size`
-（已是最小 batch）。若继续 DPO，24GB 单卡是唯一有意义的硬门槛；本轮未租。
+（已是最小 batch）。
+
+**96GB 后续（2026-10-24）**：在 AutoDL RTX PRO 6000 96GB 上，同一 DPO 配置跑通。
+第一次 smoke 暴露 `peft 0.13.2` 与 adapter 的 `peft 0.20.0` 不兼容
+（`alora_invocation_tokens`），对齐 peft 后通过；不是显存问题。smoke 1 个 optimizer
+step，全量 5 个 optimizer step，峰值 29.32 GiB。held-out baseline `40/60`、SFT
+`60/60`、SFT+DPO `60/60`，没有测到额外增量。详见 `docs/evidence/DPO结果.md`。

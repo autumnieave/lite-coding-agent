@@ -321,12 +321,13 @@ adapter 下载曾在 `IncompleteRead` 处断流两次；最终通过 Range 分�
   40GB 仍 OOM 才写“24GB/40GB 均不支持 3072 + 双 7B DPO”，随后关闭 DPO。
 - 不在 24GB 上反复调 batch size 或序列长度，不试 1024 序列。
 
-### 7.3 当前执行状态
+### 7.3 T4 阶段执行状态（历史）
 
 当前 Windows 环境只配置了 Kaggle 与 DashScope 凭据；`vastai`、`runpodctl`、`gcloud`、
 `aws`、`az` 均不存在，也没有 24GB/40GB 租卡接口。因此本轮**没有实际租卡、没有 GPU
 smoke、没有 DPO held-out 结果**。预算结论和止损规则已写死，执行记录见
-`docs/evidence/DPO结果.md`；不能把“未执行”写成“24GB 不支持”。
+`docs/evidence/DPO结果.md`；不能把“未执行”写成“24GB 不支持”。96GB 实例上的
+实际执行见第 10 节。
 
 ## 8. 修复决策
 
@@ -349,8 +350,34 @@ smoke、没有 DPO held-out 结果**。预算结论和止损规则已写死，�
 - v1：SFT 5070.6s，DPO 42.3s 后失败；
 - v2：SFT 5795.2s，DPO 60.0s 后失败；
 - v3：另起独立 smoke kernel（`max_steps=1`，不重训 SFT），DPO 阶段 106.7s 后在 reference precompute 0/45 失败；kernel 总计约 227.2s；
-- 租卡：0 个 session、0 元；当前环境没有租卡接口/凭据，24GB smoke 未执行；
+- 租卡：截至 T4 阶段为 0 个 session、0 元；当前环境没有租卡接口/凭据，24GB smoke 未执行；
 - 三轮都未执行 DPO held-out，未产生任何 DPO rollout 或 DPO adapter；
 - 本文对 v1/v2 只读；v3 只新增 SHA 校验、`max_steps` 与诊断字段，未改 DPO 配方，未改 `core/loop.py`、`compaction.py`、`constraints.py`。
+
+## 10. 96GB 租卡执行结果（2026-10-24）
+
+用户提供 AutoDL RTX PRO 6000 96GB 实例后，DPO 走同一配置重新执行，未改 batch、
+序列长度、beta、LoRA rank 或数据：
+
+- GPU：RTX PRO 6000 Blackwell Server Edition，97,887 MiB；驱动 580.82.09；
+  PyTorch 2.8.0+cu128；NF4 前向通过。
+- 第一次 smoke 在加载 adapter 时失败，但失败不是 OOM：train-v5 adapter 由
+  `peft 0.20.0` 保存，实例初始为 `0.13.2`，报
+  `LoraConfig.__init__() got an unexpected keyword argument 'alora_invocation_tokens'`。
+  对齐到 `peft 0.20.0` 后，同一 smoke 通过。
+- smoke：`status=completed`、1 optimizer step、loss 0.3423、adapter
+  645,975,704 bytes、SHA `fe33dd9c...f3951fd3`；全程采样峰值约 28.3 GiB。
+- 全量：`status=completed`、5 optimizer step（45 // 8，末 5 对未形成完整更新）、
+  loss `0.3423 → 0.0970 → 0.0338 → 0.0080 → 0.0029`、adapter
+  645,975,704 bytes、SHA `83eef684...6cb9a38`；全程采样峰值 29.32 GiB。
+- held-out：6 任务 × 10 rollout、`temperature=0.0`、`top_p=None`、
+  `seed=20261019`；baseline `40/60`、SFT `60/60`、SFT+DPO `60/60`；
+  valid stable `4 → 0 → 0`，within_steps 失败均为 0。
+- 结论：96GB 上 DPO 能跑通，但 SFT 在 6 个 held-out 任务上已经饱和，DPO 没有
+  可测增量；58 对偏好全部来自 CTX `code_prefix`，不外推。
+- 成本窗口：19:30:13–20:14:30 +08:00，约 44 分 17 秒，按 ¥7.08/h 约 ¥5.2；
+  不含创建实例、上传模型和用户等待时间。实例未关机，等待用户确认。
+
+完整记录见 `docs/evidence/DPO结果.md`。
 
 **相关文档**：`docs/evidence/DPO偏好对预检.md`、`docs/evidence/kaggle_runbook.md`、`docs/plan/训练侧执行计划.md`。

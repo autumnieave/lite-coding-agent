@@ -53,6 +53,11 @@ train-v5 的 86 条 rejected 按原因分布如下：
 - 偏好对数量为 **58**，但 **58/58 的 prompt 已超过 DPO 配置的 `max_prompt_length=2048`**；在 2,048 和 1,536 下，chosen/rejected 都会发生尾部截断。若按当前 `training/configs/dpo_7b_t4.json` 启动，所有样本的最后的任务指令都可能被截掉，DPO 输入不合法。
 - 在 `max_seq_length=3072` 下，prompt + completion 总长全部可容纳（0/58 超限），但 `max_prompt_length=2048` 仍会先行截断 prompt；不能据此写“DPO 数据已就绪”。
 - 因此本轮 DPO 预检判定为：**偏好对不足/长度不满足，DPO 不启动**。没有用 28 条行为缺陷轨迹硬凑正样本，也没有为凑数生成 synthetic negative。
+
+**2026-10-24 后续执行**：上述判定是当时基于 1536/2048 序列和 T4 预算的预检结论。
+后来使用 3072 序列、45/13 对和 train-v5 adapter，在 AutoDL RTX PRO 6000 96GB 上
+跑通 DPO smoke 与全量（5 个 optimizer step），held-out SFT `60/60`、SFT+DPO
+`60/60`，没有测到额外增益。完整记录见 `docs/evidence/DPO结果.md`。
 - 若后续继续 DPO，必须先二选一并在运行前记录：(a) 构造更短的 CTX 偏好对；(b) 把 `max_prompt_length` 提升到 2,048 以上且 `max_seq_length` 提升到 4,096，并重新跑本预检。本轮不执行该配置变更。
 
 **边界**：58 对只覆盖 CTX 的 `code_prefix` 修复，不覆盖 BASE/HARD/TOOL/CONFLICT；即使长度问题解决，也不能把本预检写成“DPO 数据覆盖完整”。

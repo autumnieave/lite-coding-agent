@@ -14,9 +14,10 @@ rollout 级 `0/20` vs `2/20`，Fisher `p>0.05`；受控冲突 4 组 × 5 次，�
 冻结，tokenizer 门禁后 361/74、90 optimizer step；6 个行为 held-out 任务 × 10 rollout：
 baseline `40/60`、full-loss SFT `50/60`（BASE `30/30`、HARD `20/30`、CTX-HARD
 `10/10 → 0/10`）、assistant-only SFT `60/60`（BASE/HARD `30/30`、CTX-HARD 恢复
-`10/10`）、+15% Dolly 仍 `50/60` 且 CTX-HARD `0/10`、0 次工具调用。DPO v3 版本对齐后
-仍在 T4 reference precompute OOM；24GB/40GB 租卡未执行，详见
-`docs/evidence/DPO失败诊断.md` 与 `docs/evidence/DPO结果.md`。1.5B 是能力边界探针（89 条数据 SFT `20/60`，
+`10/10`）、+15% Dolly 仍 `50/60` 且 CTX-HARD `0/10`、0 次工具调用。DPO v3 在 T4
+reference precompute OOM；96GB RTX PRO 6000 上 smoke 与全量均跑通（5 个 optimizer
+step），held-out baseline `40/60`、SFT `60/60`、SFT+DPO `60/60`，在这批已饱和任务上
+没有测到 DPO 额外收益，详见 `docs/evidence/DPO结果.md`。1.5B 是能力边界探针（89 条数据 SFT `20/60`，
 HARD `10/30`，但 A-C1-HARD 出现 10/10 重复读循环）；7B v9 的 `60/60` 是模板修复后的
 管线验证，不是方法增益。
 
@@ -77,8 +78,9 @@ v4 加载超时），S2 保持“预注册、0 rollout”。修正后的原 benc
 - **训练侧方法对照（train-v4，独立于主实验）**：7B QLoRA 在同一 6 任务 held-out 上，
   baseline `40/60`、full-loss `50/60`、assistant-only `60/60`、+15% Dolly `50/60`；
   full-loss 的 CTX-HARD 从 10/10 退化到 0/10，assistant-only 恢复 10/10，+15% Dolly
-  仍 0/10 且 0 次工具调用。DPO v3 版本对齐后仍在 T4 reference precompute OOM；
-  24GB/40GB 租卡未执行，不能写 DPO 增益或“24GB 不支持”。这组数字回答
+  仍 0/10 且 0 次工具调用。DPO v3 在 T4 reference precompute OOM；96GB 上 smoke
+  与全量均跑通，但 SFT+DPO 仍是 `60/60`，在这批已饱和任务上没有测到额外收益。
+  58 对偏好全部来自 CTX `code_prefix`，不能外推为 DPO 普遍有效。这组数字回答
   “训练侧哪个变量有效”，不替代主实验的四组对比，也不把 6 任务结果写成普遍增益。
 
 因此项目最终定位是**约束违反诊断 + 可复现评测方法论 + 训练侧能力边界验证**；`training/`
@@ -98,7 +100,7 @@ final-test-v2 的 S0/S1 对比，以及 1.5B SFT 的真实 held-out 结果都是
 | full-loss SFT | 50/60 | 30/30 | 20/30 | 120/120 | 2 |
 | assistant-only SFT | 60/60 | 30/30 | 30/30 | 170/170 | 0 |
 | +15% Dolly | 50/60 | 30/30 | 20/30 | 70/70* | 3 |
-| SFT + DPO | 未执行（T4 OOM；24GB/40GB 未租） | | | | |
+| SFT + DPO | 60/60（96GB 跑通；相对 SFT 无增量） | 30/30 | 30/30 | 100% | 0 |
 
 \* mix15 在 CTX-HARD 上 0 次工具调用；70/70 只是“已发生调用”的成功率，不是覆盖率。
 
@@ -109,6 +111,8 @@ final-test-v2 的 S0/S1 对比，以及 1.5B SFT 的真实 held-out 结果都是
 - assistant-only 把 `CTX-HARD` 恢复到 10/10，总体 60/60；单 seed、6 任务、已饱和，
   不能写“普遍有效”。
 - +15% Dolly 没有缓解 CTX 退化，反而变成 0 次工具调用；这是负结果。
+- DPO 在 96GB 上跑通，但输入只有 CTX `code_prefix` 的 45 对；SFT 与 SFT+DPO
+  在这批 held-out 上都是 60/60，没有可测增量。
 - 2 seed 的 task_success 完全一致，stable 2→3 波动 1 项；不报置信区间。
 
 1.5B 能力边界探针（历史）：89 train / 30 val、22 step，baseline `10/60` → SFT `20/60`，
@@ -130,7 +134,7 @@ BASE 全灭（`20/30 → 0/30`）根因是训练未传 `tools=`，训练渲染 3
 | 模板修复 | 训练 307 token vs 推理 1567 token；修复后 BASE 恢复 `30/30` | `docs/evidence/7B_v9_唯一变量验证.md` |
 | SFT 方法对照 | seed2 baseline 40/60；full-loss 50/60；assistant-only 60/60；+15% Dolly 50/60 | `docs/evidence/训练管线验证.md` 10.2–10.6 |
 | 补数据饱和 | train-v5 468/84，CTX-HARD 37 条；held-out 已 60/60，无剩余空间，价值在训练覆盖 | `docs/evidence/补数据决策.md` |
-| DPO | 58 对 CTX `code_prefix`；T4 OOM（请求 3.21 GiB）；24GB smoke 未执行 | `docs/evidence/DPO失败诊断.md`、`docs/evidence/DPO结果.md` |
+| DPO | 96GB 跑通（5 optimizer step）；SFT `60/60` → SFT+DPO `60/60`，无额外增量；58 对仅 CTX `code_prefix` | `docs/evidence/DPO结果.md`、`docs/evidence/DPO失败诊断.md` |
 
 
 ## 核心特性
@@ -285,7 +289,7 @@ lite-coding-agent/
 - [x] train-v4 7B QLoRA 基线 + seed2（baseline 40/60；full-loss SFT 50/60，BASE 30/30、HARD 20/30）
 - [x] Loss masking 对照（full 50/60 → assistant-only 60/60；CTX-HARD 0/10 → 10/10）
 - [x] 数据配比对照（+15% Dolly 仍 50/60；CTX-HARD 0/10 且 0 次工具调用）
-- [ ] DPO 对照（v3 版本对齐后 T4 reference precompute 仍 OOM；T4 关闭；24GB smoke 未执行）
+- [x] DPO 对照（96GB RTX PRO 6000：smoke 与全量跑通；SFT `60/60` → SFT+DPO `60/60`，无额外增量）
 - [ ] lr/rank 与 DRIFT-Bench（未跑；不写结果）
 - [ ] GRPO（仅在 SFT 结果与 reward 能惩罚步数循环后再评估）
 - [ ] Kaggle T4：Outlines constrained decoding baseline（v1 路径 ERROR、v2 bitsandbytes ERROR、v3 取消、v4 加载超时；0 条结果，无指标）
