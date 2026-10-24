@@ -88,6 +88,19 @@ CHECK_KEYWORDS: dict[str, tuple[str, ...]] = {
     "values_exact": ("字母序", "value"),
     "total_correct": ("id",),
     "source_count_correct": ("行数",),
+    "policy_applied": ("策略", "最后", "FIRST_ACTIVE", "MODE"),
+    "no_excluded_read": ("排除",),
+    "selected_count_correct": ("数量", "文件"),
+    "grep_used": ("grep",),
+    "no_archive_read": ("archive",),
+    "count_correct": ("count", "数量"),
+    "line_count_preserved": ("只允许改动目标行", "行"),
+    "verified_after_edit": ("重新读取", "验证"),
+    "resolved_exact": ("REV", "冲突"),
+    "conflicts_exact": ("冲突",),
+    "sources_exact": ("读取",),
+    "conflict_count_correct": ("冲突",),
+    "no_old_read": ("_old",),
 }
 
 
@@ -133,6 +146,7 @@ class Fixture:
     expected_read_paths: tuple[str, ...] = ()
     decoy_paths: tuple[str, ...] = ()
     conflict_mode: str = ""
+    expected_json: dict[str, Any] | None = None
 
 
 class RecordingExecutor:
@@ -167,6 +181,234 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
     suffix = task_family(spec)
     seed = spec.fixture_seed
     rng = random.Random(seed)
+
+    if suffix == "policy_extract":
+        rel = spec.json_fixture_path or "project/s15/extract/settings.ini"
+        case = spec.task_id.rsplit("-", 1)[-1]
+        if case == "A":
+            lines = (
+                "# primary settings",
+                "TOKEN=alpha-17",
+                "# TOKEN=retired-04",
+                "TOKEN=beta-29",
+                "TOKEN=gamma-43",
+                "# TOKEN=retired-08",
+            )
+            expected = {
+                "key": "TOKEN",
+                "value": "gamma-43",
+                "active_count": 3,
+                "ignored_count": 2,
+            }
+            primary_key = "value"
+        elif case == "B":
+            lines = (
+                "POLICY=FIRST_ACTIVE",
+                "LIMIT=120",
+                "# LIMIT=80",
+                "LIMIT=150",
+                "# LIMIT=240",
+            )
+            expected = {"policy": "FIRST_ACTIVE", "winner": 120, "active_count": 2}
+            primary_key = "winner"
+        else:
+            lines = (
+                "MODE=SAFE",
+                "SAFE_CODE=green-7",
+                "FAST_CODE=red-9",
+                "# both code keys are present; MODE decides the winner",
+            )
+            expected = {"mode": "SAFE", "code": "green-7", "rule": "SAFE_CODE"}
+            primary_key = "code"
+        _write(root, rel, "\n".join(lines) + "\n")
+        return Fixture(
+            task_id=spec.task_id,
+            kind="policy_extract",
+            main_path=rel,
+            main_content=str(expected[primary_key]),
+            expected_json=expected,
+        )
+
+    if suffix == "selective_aggregate":
+        directory = spec.path_directory or "project/s15/select"
+        case = spec.task_id.rsplit("-", 1)[-1]
+        if case == "A":
+            selected = (f"{directory}/app.log", f"{directory}/worker.log")
+            excluded = (
+                f"{directory}/app.draft.log",
+                f"{directory}/notes.txt",
+                f"{directory}/_index.txt",
+            )
+            payloads = {
+                selected[0]: "10\n20\n",
+                selected[1]: "5\n7\n",
+                excluded[0]: "9000\n",
+                excluded[1]: "8000\n",
+                excluded[2]: "7000\n",
+            }
+            expected_total = 42
+        elif case == "B":
+            selected = (
+                f"{directory}/part01.txt",
+                f"{directory}/part02.txt",
+                f"{directory}/part03.txt",
+            )
+            excluded = (f"{directory}/part01_old.txt", f"{directory}/notes.md")
+            payloads = {
+                selected[0]: "a\nb\nc\n",
+                selected[1]: "d\ne\nf\ng\n",
+                selected[2]: "h\ni\nj\nk\nl\n",
+                excluded[0]: "stale\nstale\n",
+                excluded[1]: "not selected\n",
+            }
+            expected_total = 12
+        else:
+            selected = (f"{directory}/a.csv", f"{directory}/b.csv", f"{directory}/d.csv")
+            excluded = (f"{directory}/tmp_a.csv", f"{directory}/notes.txt")
+            payloads = {
+                selected[0]: "4\n9\n",
+                selected[1]: "13\n2\n",
+                selected[2]: "8\n",
+                excluded[0]: "1000\n",
+                excluded[1]: "ignored\n",
+            }
+            expected_total = 36
+        for rel, text in payloads.items():
+            _write(root, rel, text)
+        return Fixture(
+            task_id=spec.task_id,
+            kind="selective_aggregate",
+            files=selected,
+            expected_read_paths=selected,
+            decoy_paths=excluded,
+            expected_total=expected_total,
+            source_count=len(selected),
+        )
+
+    if suffix == "search_collect":
+        directory = spec.path_directory or "project/s15/search"
+        case = spec.task_id.rsplit("-", 1)[-1]
+        if case == "A":
+            marker = "NEEDLE-"
+            hits = (f"{directory}/alpha.txt", f"{directory}/beta.txt")
+            payloads = {
+                hits[0]: "NEEDLE-104\nNEEDLE-108\n",
+                hits[1]: "NEEDLE-108\nNEEDLE-115\n",
+                f"{directory}/gamma.txt": "no matching marker\n",
+            }
+            expected_ids = (104, 108, 115)
+        elif case == "B":
+            marker = "FLAG-"
+            hits = (f"{directory}/north.txt", f"{directory}/south.txt")
+            payloads = {
+                hits[0]: "FLAG-21\nother text\n",
+                hits[1]: "FLAG-34\nFLAG-21\n",
+                f"{directory}/empty.txt": "clear\n",
+            }
+            expected_ids = (21, 34)
+        else:
+            marker = "KEY-"
+            hits = (f"{directory}/one.txt", f"{directory}/two.txt")
+            payloads = {
+                hits[0]: "KEY-7\n KEY-700\n",
+                hits[1]: "KEY-7\nKEY-12\n",
+                f"{directory}/three.txt": "prefix KEY-900 is not at line start\n",
+            }
+            expected_ids = (7, 12)
+        archive = f"{directory}/archive/old.txt"
+        payloads[archive] = f"{marker}999\n{marker}1000\n"
+        for rel, text in payloads.items():
+            _write(root, rel, text)
+        return Fixture(
+            task_id=spec.task_id,
+            kind="search_collect",
+            files=hits,
+            expected_ids=expected_ids,
+            expected_read_paths=hits,
+            decoy_paths=(archive,),
+        )
+
+    if suffix == "edit_verify":
+        rel = spec.edit_path or "project/s15/edit/part01.txt"
+        target = spec.edit_target_line or 17
+        new_token = spec.edit_new_token or "FIX-S15"
+        case = spec.task_id.rsplit("-", 1)[-1]
+        old_token = f"OLD-S15{case}"
+        line_count = {"A": 60, "B": 90, "C": 140}[case]
+        lines = [f"row-{index:03d}: token-{index:03d}" for index in range(1, line_count + 1)]
+        lines[target - 1] = f"row-{target:03d}: {old_token}"
+        _write(root, rel, "\n".join(lines) + "\n")
+        return Fixture(
+            task_id=spec.task_id,
+            kind="edit_verify",
+            line_path=rel,
+            snapshot_lines=tuple(lines),
+            target_line=target,
+            old_token=old_token,
+            new_token=new_token,
+        )
+
+    if suffix == "audit_reconcile":
+        directory = spec.path_directory or "project/s15/audit"
+        case = spec.task_id.rsplit("-", 1)[-1]
+        shards: dict[str, str]
+        if case == "A":
+            shards = {
+                "shard01.txt": "ALPHA=a1;REV=1\nBETA=b1;REV=4\nGAMMA=g1;REV=2\n",
+                "shard02.txt": "ALPHA=a2;REV=5\nBETA=b2;REV=4\nDELTA=d1;REV=3\n",
+                "shard03.txt": "ALPHA=a2;REV=5\nGAMMA=g2;REV=6\n",
+            }
+            resolved = {"ALPHA": "a2", "GAMMA": "g2", "DELTA": "d1"}
+            conflicts = ["BETA"]
+            old_name = "shard01.txt"
+        elif case == "B":
+            shards = {
+                "shard01.txt": "OMEGA=o1;REV=2\nRHO=r1;REV=7\n",
+                "shard02.txt": "OMEGA=o2;REV=2\nRHO=r2;REV=8\n",
+                "shard03.txt": "SIGMA=s1;REV=1\nTAU=t1;REV=3\n",
+            }
+            resolved = {"RHO": "r2", "SIGMA": "s1", "TAU": "t1"}
+            conflicts = ["OMEGA"]
+            old_name = "shard02.txt"
+        else:
+            shards = {
+                "shard01.txt": "ETA=e1;REV=1\nIOTA=i1;REV=5\nKAPPA=k1;REV=2\n",
+                "shard02.txt": "ETA=e2;REV=1\nIOTA=i2;REV=5\nLAMBDA=l1;REV=4\n",
+                "shard03.txt": "KAPPA=k2;REV=3\nMU=m1;REV=6\n",
+                "shard04.txt": "THETA=t1;REV=4\nZETA=z1;REV=2\n",
+                "shard05.txt": "ZETA=z1;REV=2\n",
+            }
+            resolved = {
+                "KAPPA": "k2",
+                "LAMBDA": "l1",
+                "MU": "m1",
+                "THETA": "t1",
+                "ZETA": "z1",
+            }
+            conflicts = ["ETA", "IOTA"]
+            old_name = "shard03.txt"
+        sources = tuple(sorted(f"{directory}/{name}" for name in shards))
+        for name, text in shards.items():
+            _write(root, f"{directory}/{name}", text)
+        old_path = f"{directory}/_old/{old_name}"
+        _write(root, old_path, "ALPHA=stale;REV=99\nETA=stale;REV=99\nIOTA=stale;REV=99\n")
+        _write(root, f"{directory}/notes.txt", "not a shard\n")
+        expected = {
+            "resolved": resolved,
+            "conflicts": sorted(conflicts),
+            "sources": list(sources),
+            "conflict_count": len(conflicts),
+        }
+        return Fixture(
+            task_id=spec.task_id,
+            kind="audit_reconcile",
+            files=sources,
+            expected_read_paths=sources,
+            decoy_paths=(old_path, f"{directory}/notes.txt"),
+            expected_total=len(conflicts),
+            source_count=len(sources),
+            expected_json=expected,
+        )
 
     if suffix == "json_constraints":
         rel = spec.json_fixture_path or "project/tuning/config_c1.ini"
@@ -415,6 +657,16 @@ def _read_paths(calls: Sequence[ToolCallRecord]) -> set[str]:
     return found
 
 
+def _call_path(call: ToolCallRecord) -> str:
+    try:
+        payload = json.loads(call.arguments)
+    except (TypeError, ValueError):
+        return ""
+    if isinstance(payload, dict) and isinstance(payload.get("path"), str):
+        return _normalize_rel(payload["path"])
+    return ""
+
+
 def judge(
     spec: UnifiedTaskSpec,
     fixture: Fixture,
@@ -428,7 +680,126 @@ def judge(
     checks: dict[str, bool] = {}
     suffix = task_family(spec)
 
-    if suffix == "json_constraints":
+    if suffix == "policy_extract":
+        expected = fixture.expected_json or {}
+        primary_key = {
+            "A": "value",
+            "B": "winner",
+            "C": "code",
+        }[spec.task_id.rsplit("-", 1)[-1]]
+        checks["json_valid"] = isinstance(payload, dict)
+        checks["exact_keys"] = isinstance(payload, dict) and set(payload) == set(expected)
+        checks["value_correct"] = bool(
+            isinstance(payload, dict) and payload.get(primary_key) == expected.get(primary_key)
+        )
+        checks["policy_applied"] = isinstance(payload, dict) and payload == expected
+        checks["no_fence"] = "```" not in reply
+
+    elif suffix == "selective_aggregate":
+        files = payload.get("files") if isinstance(payload, dict) else None
+        file_list = [str(item) for item in files] if isinstance(files, list) else None
+        checks["json_valid"] = isinstance(payload, dict)
+        checks["files_exact"] = bool(
+            file_list is not None
+            and len(file_list) == len(fixture.files)
+            and set(file_list) == set(fixture.files)
+        )
+        checks["total_correct"] = bool(
+            isinstance(payload, dict) and payload.get("total") == fixture.expected_total
+        )
+        checks["selected_count_correct"] = bool(
+            isinstance(payload, dict) and payload.get("selected_count") == fixture.source_count
+        )
+        checks["sorted"] = bool(
+            file_list is not None and file_list == sorted(file_list, key=str.lower)
+        )
+        checks["no_excluded_read"] = not (_read_paths(calls) & set(fixture.decoy_paths))
+
+    elif suffix == "search_collect":
+        ids = payload.get("ids") if isinstance(payload, dict) else None
+        files = payload.get("files") if isinstance(payload, dict) else None
+        file_list = [str(item) for item in files] if isinstance(files, list) else None
+        checks["json_valid"] = isinstance(payload, dict)
+        checks["ids_exact"] = bool(ids == list(fixture.expected_ids))
+        checks["files_exact"] = bool(
+            file_list is not None
+            and len(file_list) == len(fixture.expected_read_paths)
+            and set(file_list) == set(fixture.expected_read_paths)
+        )
+        checks["sorted"] = bool(
+            isinstance(ids, list)
+            and ids == sorted(ids)
+            and file_list is not None
+            and file_list == sorted(file_list, key=str.lower)
+        )
+        checks["count_correct"] = bool(
+            isinstance(payload, dict) and payload.get("count") == len(fixture.expected_ids)
+        )
+        checks["grep_used"] = bool(_successful_calls(calls, "grep"))
+        checks["no_archive_read"] = not (_read_paths(calls) & set(fixture.decoy_paths))
+
+    elif suffix == "edit_verify":
+        current = _read_lines(root / fixture.line_path)
+        target_index = fixture.target_line - 1
+        target_text = current[target_index] if target_index < len(current) else ""
+        checks["edit_file_used"] = bool(_successful_calls(calls, "edit_file"))
+        checks["only_target_line"] = bool(
+            len(current) == len(fixture.snapshot_lines)
+            and all(
+                current[index] == fixture.snapshot_lines[index]
+                for index in range(len(current))
+                if index != target_index
+            )
+        )
+        checks["token_replaced"] = (
+            fixture.new_token in target_text and fixture.old_token not in target_text
+        )
+        checks["line_count_preserved"] = len(current) == len(fixture.snapshot_lines)
+        verified = False
+        for index, call in enumerate(calls):
+            if (
+                call.name != "edit_file"
+                or not call.result.ok
+                or _call_path(call) != fixture.line_path
+            ):
+                continue
+            if any(
+                later.name == "read_file"
+                and later.result.ok
+                and _call_path(later) == fixture.line_path
+                for later in calls[index + 1 :]
+            ):
+                verified = True
+                break
+        checks["verified_after_edit"] = verified
+        checks["json_answer"] = bool(
+            isinstance(payload, dict)
+            and payload.get("changed") is True
+            and payload.get("line") == fixture.target_line
+            and payload.get("verified") is True
+        )
+
+    elif suffix == "audit_reconcile":
+        expected = fixture.expected_json or {}
+        checks["json_valid"] = isinstance(payload, dict)
+        checks["resolved_exact"] = bool(
+            isinstance(payload, dict) and payload.get("resolved") == expected.get("resolved")
+        )
+        checks["conflicts_exact"] = bool(
+            isinstance(payload, dict) and payload.get("conflicts") == expected.get("conflicts")
+        )
+        checks["sources_exact"] = bool(
+            isinstance(payload, dict) and payload.get("sources") == expected.get("sources")
+        )
+        checks["conflict_count_correct"] = bool(
+            isinstance(payload, dict)
+            and payload.get("conflict_count") == expected.get("conflict_count")
+        )
+        checks["no_old_read"] = not any(
+            "/_old/" in path or path.startswith("_old/") for path in _read_paths(calls)
+        )
+
+    elif suffix == "json_constraints":
         keys = collect_keys(payload)
         checks["json_valid"] = isinstance(payload, dict)
         checks["snake_case_keys"] = bool(keys) and all(SNAKE_CASE.fullmatch(key) for key in keys)
@@ -973,6 +1344,33 @@ def write_outputs(
 
 def oracle_reply(spec: UnifiedTaskSpec, fixture: Fixture) -> str:
     suffix = task_family(spec)
+    if suffix == "policy_extract":
+        return json.dumps(fixture.expected_json or {}, ensure_ascii=False)
+    if suffix == "selective_aggregate":
+        return json.dumps(
+            {
+                "files": sorted(fixture.files, key=str.lower),
+                "total": fixture.expected_total,
+                "selected_count": fixture.source_count,
+            },
+            ensure_ascii=False,
+        )
+    if suffix == "search_collect":
+        return json.dumps(
+            {
+                "ids": list(fixture.expected_ids),
+                "files": sorted(fixture.expected_read_paths, key=str.lower),
+                "count": len(fixture.expected_ids),
+            },
+            ensure_ascii=False,
+        )
+    if suffix == "edit_verify":
+        return json.dumps(
+            {"changed": True, "line": fixture.target_line, "verified": True},
+            ensure_ascii=False,
+        )
+    if suffix == "audit_reconcile":
+        return json.dumps(fixture.expected_json or {}, ensure_ascii=False)
     if suffix == "json_constraints":
         return json.dumps(
             {"path": fixture.main_path, "value": fixture.main_content},
@@ -1028,6 +1426,36 @@ def oracle_reply(spec: UnifiedTaskSpec, fixture: Fixture) -> str:
 def oracle_calls(spec: UnifiedTaskSpec, fixture: Fixture) -> list[ToolCallRecord]:
     ok = ToolResult.success("ok")
     suffix = task_family(spec)
+    if suffix == "policy_extract":
+        return [ToolCallRecord("read_file", json.dumps({"path": fixture.main_path}), ok)]
+    if suffix == "selective_aggregate":
+        calls = [ToolCallRecord("list_dir", json.dumps({"path": spec.path_directory}), ok)]
+        calls.extend(
+            ToolCallRecord("read_file", json.dumps({"path": path}), ok)
+            for path in fixture.expected_read_paths
+        )
+        return calls
+    if suffix == "search_collect":
+        directory = spec.path_directory
+        calls = [ToolCallRecord("grep", json.dumps({"pattern": ".", "path": directory}), ok)]
+        calls.extend(
+            ToolCallRecord("read_file", json.dumps({"path": path}), ok)
+            for path in fixture.expected_read_paths
+        )
+        return calls
+    if suffix == "edit_verify":
+        return [
+            ToolCallRecord("read_file", json.dumps({"path": fixture.line_path}), ok),
+            ToolCallRecord("edit_file", json.dumps({"path": fixture.line_path}), ok),
+            ToolCallRecord("read_file", json.dumps({"path": fixture.line_path}), ok),
+        ]
+    if suffix == "audit_reconcile":
+        calls = [ToolCallRecord("list_dir", json.dumps({"path": spec.path_directory}), ok)]
+        calls.extend(
+            ToolCallRecord("read_file", json.dumps({"path": path}), ok)
+            for path in fixture.expected_read_paths
+        )
+        return calls
     if suffix == "json_constraints":
         return [ToolCallRecord("read_file", json.dumps({"path": fixture.main_path}), ok)]
     if suffix == "context_recall":
@@ -1111,6 +1539,14 @@ def run_self_test(specs: Sequence[UnifiedTaskSpec] | None = None) -> int:
                 lines = list(fixture.snapshot_lines)
                 lines[fixture.target_line - 1] = (
                     f"row-{fixture.target_line:02d}: {fixture.new_token}"
+                )
+                (workspace / fixture.line_path).write_text(
+                    "\n".join(lines) + "\n", encoding="utf-8"
+                )
+            if suffix == "edit_verify":
+                lines = list(fixture.snapshot_lines)
+                lines[fixture.target_line - 1] = (
+                    f"row-{fixture.target_line:03d}: {fixture.new_token}"
                 )
                 (workspace / fixture.line_path).write_text(
                     "\n".join(lines) + "\n", encoding="utf-8"

@@ -38,6 +38,7 @@ from training.difficulty_tuning import (  # noqa: E402
 )
 from training.final_test import build_final_specs  # noqa: E402
 from training.kaggle.contracts import read_jsonl  # noqa: E402
+from training.stats_heldout import STATS_TASK_SPECS, validate_stats_specs  # noqa: E402
 from training.system_variants import GUIDED_JSON_SCHEMA  # noqa: E402
 from training.train_split import build_train_specs  # noqa: E402
 
@@ -46,7 +47,7 @@ DEFAULT_TRACE_DIR = Path("private/traces/difficulty_tuning")
 
 
 def _dimension_map(specs: Sequence[Any] = TUNING_TASK_SPECS) -> dict[str, str]:
-    return {spec.task_id: spec.tuning_dimension for spec in specs}
+    return {spec.task_id: spec.tuning_dimension or spec.family for spec in specs}
 
 
 def completed_job_keys(out_dir: Path) -> set[tuple[str, int]]:
@@ -69,12 +70,15 @@ def build_summary_rows(
     specs: Sequence[Any] = TUNING_TASK_SPECS,
 ) -> list[dict[str, Any]]:
     dimensions = _dimension_map(specs)
+    specs_by_id = {spec.task_id: spec for spec in specs}
     checks_by_task: dict[str, list[Mapping[str, Any]]] = {}
     for row in checks:
         checks_by_task.setdefault(str(row["task_id"]), []).append(row)
     rows: list[dict[str, Any]] = []
     for task in tasks:
         task_id = str(task["task_id"])
+        spec = specs_by_id[task_id]
+        level = spec.difficulty if not spec.tuning_dimension else tuning_level(task_id)
         task_checks = checks_by_task.get(task_id, [])
         max_hits = max((int(row["hits"]) for row in task_checks), default=0)
         max_total = max((int(row["total"]) for row in task_checks), default=0)
@@ -82,7 +86,7 @@ def build_summary_rows(
         rows.append(
             {
                 "dimension": dimensions[task_id],
-                "level": tuning_level(task_id),
+                "level": level,
                 "task_id": task_id,
                 "rollouts": task["rollouts"],
                 "checks": len(task_checks),
@@ -106,7 +110,12 @@ def build_summary_rows(
         "check_depth": 4,
     }
     level_order = {"base": 0, "none": 0, "weak": 1, "hard": 2, "strong": 2}
-    rows.sort(key=lambda row: (order[str(row["dimension"])], level_order[str(row["level"])]))
+    rows.sort(
+        key=lambda row: (
+            order.get(str(row["dimension"]), 99),
+            level_order.get(str(row["level"]), 99),
+        )
+    )
     return rows
 
 
@@ -197,6 +206,10 @@ async def main_async(args: argparse.Namespace) -> int:
         validate_tuning = False
     elif args.spec_set == "train":
         specs = build_train_specs(args.train_version)
+        validate_tuning = False
+    elif args.spec_set == "stats":
+        validate_stats_specs()
+        specs = STATS_TASK_SPECS
         validate_tuning = False
     else:
         specs = TUNING_TASK_SPECS
@@ -388,7 +401,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sampling-seed", type=int, default=20261019)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--trace-dir", type=Path, default=DEFAULT_TRACE_DIR)
-    parser.add_argument("--spec-set", choices=("tuning", "final-test", "train"), default="tuning")
+    parser.add_argument(
+        "--spec-set",
+        choices=("tuning", "final-test", "train", "stats"),
+        default="tuning",
+    )
     parser.add_argument(
         "--train-version",
         choices=("train-v1", "train-v2"),
