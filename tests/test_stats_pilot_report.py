@@ -46,3 +46,9 @@ def test_pilot_decision_blocks_on_degraded_condition() -> None:
     summary["conditions"]["sft"]["status"] = "degraded"
     decision, _ = decide(summary)
     assert decision == "未判定"
+
+
+def test_pilot_decision_flags_baseline_floor_effect() -> None:
+    decision, notes = decide(_summary([0, 0, 0, 0, 0], [0, 0, 0, 0, 10]))
+    assert decision == "进入 1.5c 功效分析"
+    assert any("地板效应" in note for note in notes)

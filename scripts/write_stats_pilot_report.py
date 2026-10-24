@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +41,14 @@ def decide(summary: dict[str, Any]) -> tuple[str, list[str]]:
         f"SFT 通过率 <90% 的任务数：{zero_below_90}/{len(sft_rates)}。",
         f"baseline 与 SFT 都 ≥90% 的任务数：{both_nine_of_ten}/{len(sft_rates)}。",
     ]
+    if all(rate == 0.0 for rate in baseline_rates):
+        notes.append(
+            "baseline 在全部 pilot 任务上为 0/10，存在地板效应；"
+            "pilot 可以判定“未饱和”，但不能估计总体 baseline 方差或支持广泛训练增益。"
+        )
+    positive_sft = [task_id for task_id in task_ids if float(sft[task_id]["pass_rate"]) > 0]
+    if len(positive_sft) == 1:
+        notes.append(f"SFT 唯一有通过样本的任务是 `{positive_sft[0]}`；效应不能外推到其他族。")
     if all_perfect:
         notes.append("用户本轮门禁：5/5 任务 SFT 均为 10/10，判定饱和；只允许加难一轮。")
         return "加难（回 1.5a）", notes
@@ -49,7 +59,23 @@ def decide(summary: dict[str, Any]) -> tuple[str, list[str]]:
     return "灰区（报告等确认）", notes
 
 
-def build_document(summary: dict[str, Any], *, kernel: str, adapter_sha: str) -> str:
+def _failed_checks(rows: Sequence[Mapping[str, Any]]) -> Counter[str]:
+    failures: Counter[str] = Counter()
+    for row in rows:
+        for name, passed in (row.get("checks") or {}).items():
+            if not passed:
+                failures[name] += 1
+    return failures
+
+
+def build_document(
+    summary: dict[str, Any],
+    *,
+    kernel: str,
+    adapter_sha: str,
+    runs_by_condition: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    staging: dict[str, Any] | None = None,
+) -> str:
     conditions = summary.get("conditions", {})
     baseline = _task_map(conditions.get("baseline", {}))
     sft = _task_map(conditions.get("sft", {}))
@@ -63,13 +89,25 @@ def build_document(summary: dict[str, Any], *, kernel: str, adapter_sha: str) ->
         "- 采样：`temperature=0.0`、`top_p=None`、`seed=20261019`",
         "- 规模：5 个任务 × 10 rollout × baseline/SFT = 100 条",
         "- 方差口径：每个任务 10 个二元结果的样本方差；另列 Bernoulli `p(1-p)`。",
-        "",
-        "## 逐任务结果",
-        "",
-        "| 任务 | baseline 通过 | baseline 率 | baseline 方差 | SFT 通过 | SFT 率 | "
-        "SFT 方差 | 变化 | stable(≥6/10) |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
+    if staging:
+        staging_conditions = list(staging.get("conditions", {}).values())
+        staging_errors = sum(int(row.get("errors") or 0) for row in staging_conditions)
+        staging_success = sum(int(row.get("task_success") or 0) for row in staging_conditions)
+        lines.append(
+            f"- staging：5 任务 × 1 rollout × 2 组，0 error={staging_errors == 0}，"
+            f"合计 success={staging_success}；通过后跑 full。"
+        )
+    lines.extend(
+        [
+            "",
+            "## 逐任务结果",
+            "",
+            "| 任务 | baseline 通过 | baseline 率 | baseline 方差 | SFT 通过 | SFT 率 | "
+            "SFT 方差 | 变化 | stable(≥6/10) |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        ]
+    )
     for task_id in summary.get("tasks", []):
         base = baseline.get(task_id, {})
         trained = sft.get(task_id, {})
@@ -109,6 +147,31 @@ def build_document(summary: dict[str, Any], *, kernel: str, adapter_sha: str) ->
             f"{row.get('errors', 0)} | {row.get('task_success', 0)} | "
             f"{_pct(float(row.get('pass_rate', 0.0)))} |"
         )
+    if runs_by_condition:
+        lines.extend(
+            [
+                "",
+                "## 失败检查项计数",
+                "",
+                "| 任务 | baseline 失败检查（10 次中） | SFT 失败检查（10 次中） |",
+                "| --- | --- | --- |",
+            ]
+        )
+        for task_id in summary.get("tasks", []):
+            cells: list[str] = []
+            for condition_name in ("baseline", "sft"):
+                rows = [
+                    row
+                    for row in runs_by_condition[condition_name]
+                    if row.get("task_id") == task_id
+                ]
+                failures = _failed_checks(rows)
+                cells.append(
+                    ", ".join(f"{name}={count}" for name, count in failures.most_common())
+                    if failures
+                    else "无"
+                )
+            lines.append(f"| `{task_id}` | {cells[0]} | {cells[1]} |")
     lines.extend(["", "## 判定", "", f"**{decision}**", ""])
     lines.extend(f"- {note}" for note in notes)
     lines.extend(
@@ -172,8 +235,15 @@ def write_csv(path: Path, summary: dict[str, Any]) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="render stage-1.5b pilot markdown")
     parser.add_argument("--summary", type=Path, required=True)
+    parser.add_argument("--staging-summary", type=Path, default=None)
     parser.add_argument("--out", type=Path, default=Path("docs/evidence/统计heldout_pilot.md"))
     parser.add_argument("--csv-out", type=Path, default=Path("docs/evidence/统计heldout_pilot.csv"))
+    parser.add_argument(
+        "--runs-root",
+        type=Path,
+        default=None,
+        help="optional full-run root containing baseline/runs.jsonl and sft/runs.jsonl",
+    )
     parser.add_argument("--kernel", default="autumnsq/lite-agent-stage-1-5-stats-pilot")
     parser.add_argument(
         "--adapter-sha",
@@ -185,7 +255,28 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     summary = json.loads(args.summary.read_text(encoding="utf-8"))
-    document = build_document(summary, kernel=args.kernel, adapter_sha=args.adapter_sha)
+    staging = (
+        json.loads(args.staging_summary.read_text(encoding="utf-8"))
+        if args.staging_summary
+        else None
+    )
+    runs_by_condition: dict[str, list[dict[str, Any]]] | None = None
+    if args.runs_root:
+        runs_by_condition = {}
+        for condition_name in ("baseline", "sft"):
+            path = args.runs_root / condition_name / "runs.jsonl"
+            runs_by_condition[condition_name] = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+    document = build_document(
+        summary,
+        kernel=args.kernel,
+        adapter_sha=args.adapter_sha,
+        runs_by_condition=runs_by_condition,
+        staging=staging,
+    )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(document, encoding="utf-8", newline="\n")
     write_csv(args.csv_out, summary)
