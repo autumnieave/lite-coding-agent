@@ -19,43 +19,76 @@ def _pct(value: float) -> str:
     return f"{value:.0%}"
 
 
-def decide(summary: dict[str, Any]) -> tuple[str, list[str]]:
+def _sampling_text(sampling: Mapping[str, Any] | None) -> str:
+    if not sampling:
+        return "- 采样：summary 未记录采样配置。"
+    temperature = sampling.get("temperature")
+    top_p = sampling.get("top_p")
+    base_seed = sampling.get("base_seed", sampling.get("seed"))
+    seed_policy = sampling.get("seed_policy")
+    seed_suffix = (
+        "（每 rollout 使用 `base_seed + rollout_index`）"
+        if seed_policy == "base_seed_plus_rollout_index"
+        else "（所有 rollout 使用同一 seed）"
+        if seed_policy
+        else ""
+    )
+    return f"- 采样：`temperature={temperature}`、`top_p={top_p}`、`seed={base_seed}`{seed_suffix}"
+
+
+def decide(summary: dict[str, Any], *, final_round: bool = False) -> tuple[str, list[str]]:
     conditions = summary.get("conditions", {})
     if set(conditions) != {"baseline", "sft"}:
         return "未判定", ["缺少 baseline 或 SFT 条件，不能判定。"]
     if any(condition.get("status") != "completed" for condition in conditions.values()):
-        return "未判定", ["存在 harness error 或 rollout 不完整；先修复，再判饱和。"]
+        return "未判定", ["存在 harness error 或 rollout 不完整；先修复，再判区分度。"]
     baseline = _task_map(conditions["baseline"])
     sft = _task_map(conditions["sft"])
     task_ids = summary.get("tasks", [])
     sft_rates = [float(sft[task_id]["pass_rate"]) for task_id in task_ids]
     baseline_rates = [float(baseline[task_id]["pass_rate"]) for task_id in task_ids]
-    zero_below_90 = sum(rate < 0.9 for rate in sft_rates)
-    all_perfect = all(rate == 1.0 for rate in sft_rates)
-    both_nine_of_ten = sum(
-        base >= 0.9 and trained >= 0.9
-        for base, trained in zip(baseline_rates, sft_rates, strict=True)
-    )
-    notes = [
-        f"SFT 10/10 的任务数：{sum(rate == 1.0 for rate in sft_rates)}/{len(sft_rates)}。",
-        f"SFT 通过率 <90% 的任务数：{zero_below_90}/{len(sft_rates)}。",
-        f"baseline 与 SFT 都 ≥90% 的任务数：{both_nine_of_ten}/{len(sft_rates)}。",
-    ]
-    if all(rate == 0.0 for rate in baseline_rates):
-        notes.append(
-            "baseline 在全部 pilot 任务上为 0/10，存在地板效应；"
-            "pilot 可以判定“未饱和”，但不能估计总体 baseline 方差或支持广泛训练增益。"
-        )
+    informative = sum(0.2 <= rate <= 0.8 for rate in baseline_rates)
+    floor = all(rate == 0.0 for rate in baseline_rates)
+    ceiling = all(rate == 1.0 for rate in baseline_rates) and all(rate == 1.0 for rate in sft_rates)
+    binary_only = all(rate in (0.0, 1.0) for rate in baseline_rates)
     positive_sft = [task_id for task_id in task_ids if float(sft[task_id]["pass_rate"]) > 0]
+    notes = [
+        "baseline 通过率："
+        + "、".join(
+            f"`{task_id}` {_pct(rate)}"
+            for task_id, rate in zip(task_ids, baseline_rates, strict=True)
+        )
+        + "。",
+        f"baseline 通过率落在 20–80% 的任务数：{informative}/{len(task_ids)}。",
+        f"SFT 通过率 ≥90% 的任务数：{sum(rate >= 0.9 for rate in sft_rates)}/{len(sft_rates)}。",
+    ]
+    if floor:
+        notes.append(
+            "baseline 在全部 pilot 任务上为 0，存在地板效应；零方差 + 单向不一致对，"
+            "McNemar/Bootstrap/功效分析均无可解释的总体参数。"
+        )
     if len(positive_sft) == 1:
         notes.append(f"SFT 唯一有通过样本的任务是 `{positive_sft[0]}`；效应不能外推到其他族。")
-    if all_perfect:
-        notes.append("用户本轮门禁：5/5 任务 SFT 均为 10/10，判定饱和；只允许加难一轮。")
-        return "加难（回 1.5a）", notes
-    if zero_below_90 >= 3:
-        notes.append("用户本轮门禁：至少 3 个任务 SFT <90%，判定不饱和；进入 1.5c。")
+    if informative >= 3:
+        notes.append("门禁：至少 3 个任务 baseline 通过率在 20–80%，可进入 1.5c 功效分析。")
         return "进入 1.5c 功效分析", notes
-    notes.append("本轮结果落在两条门禁之间的灰区；不自行解释为显著，报告后等确认。")
+    if final_round:
+        notes.append(
+            "门禁：第 2 轮仍只有 "
+            f"{informative}/{len(task_ids)} 个任务落在 20–80%，未达到 3 个任务；"
+            "在 6 任务预注册门槛下，任务难度无法形成区分度，统计显著验证不成立，收尾。"
+        )
+        return "任务难度无法形成区分度；统计显著验证不成立，收尾", notes
+    if floor:
+        notes.append("门禁：baseline 无区分度，退回 1.5a 调难度；1.5c 不启动。")
+        return "baseline 地板效应；退回 1.5a，1.5c 不启动", notes
+    if ceiling:
+        notes.append("门禁：baseline 与 SFT 均全通过，判定饱和；只允许加难一轮。")
+        return "饱和；加难（回 1.5a）", notes
+    if binary_only:
+        notes.append("baseline 只有 0/100 两种结果且有效任务不足 3 个；再调一轮，不进入 1.5c。")
+        return "再调一轮（第 2 轮）", notes
+    notes.append("baseline 区分度不足 3 个任务；本轮不进入 1.5c，报告后等确认。")
     return "灰区（报告等确认）", notes
 
 
@@ -75,19 +108,28 @@ def build_document(
     adapter_sha: str,
     runs_by_condition: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
     staging: dict[str, Any] | None = None,
+    sampling: Mapping[str, Any] | None = None,
+    round_label: str = "Round 2",
+    final_round: bool = False,
 ) -> str:
     conditions = summary.get("conditions", {})
     baseline = _task_map(conditions.get("baseline", {}))
     sft = _task_map(conditions.get("sft", {}))
-    decision, notes = decide(summary)
+    decision, notes = decide(summary, final_round=final_round)
+    task_ids = summary.get("tasks", [])
+    expected = max((int(row.get("expected_rollouts", 0)) for row in baseline.values()), default=0)
+    effective_sampling = sampling or conditions.get("baseline", {}).get("sampling")
     lines = [
-        "# 阶段 1.5b Pilot 评测",
+        f"# 阶段 1.5b Pilot v2 评测（{round_label}）",
         "",
         f"- Kaggle kernel：`{kernel}`",
         f"- train-v5 adapter SHA-256：`{adapter_sha}`",
         "- 模型：`Qwen/Qwen2.5-7B-Instruct`，NF4，transformers 离线 provider（不起 vLLM server）",
-        "- 采样：`temperature=0.0`、`top_p=None`、`seed=20261019`",
-        "- 规模：5 个任务 × 10 rollout × baseline/SFT = 100 条",
+        _sampling_text(effective_sampling),
+        f"- 规模：{len(task_ids)} 个任务 × {expected} rollout × baseline/SFT = "
+        f"{len(task_ids) * expected * 2} 条",
+        "- 任务分层：easy / medium / hard 各 2 个任务；每层 baseline 目标分别为 "
+        "60–80% / 40–60% / 20–40%。",
         "- 方差口径：每个任务 10 个二元结果的样本方差；另列 Bernoulli `p(1-p)`。",
     ]
     if staging:
@@ -95,7 +137,8 @@ def build_document(
         staging_errors = sum(int(row.get("errors") or 0) for row in staging_conditions)
         staging_success = sum(int(row.get("task_success") or 0) for row in staging_conditions)
         lines.append(
-            f"- staging：5 任务 × 1 rollout × 2 组，0 error={staging_errors == 0}，"
+            f"- staging：{len(task_ids)} 任务 × 1 rollout × 2 组，"
+            f"0 error={staging_errors == 0}，"
             f"合计 success={staging_success}；通过后跑 full。"
         )
     lines.extend(
@@ -103,9 +146,9 @@ def build_document(
             "",
             "## 逐任务结果",
             "",
-            "| 任务 | baseline 通过 | baseline 率 | baseline 方差 | SFT 通过 | SFT 率 | "
+            "| 任务 | 层 | baseline 通过 | baseline 率 | baseline 方差 | SFT 通过 | SFT 率 | "
             "SFT 方差 | 变化 | stable(≥6/10) |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
         ]
     )
     for task_id in summary.get("tasks", []):
@@ -118,6 +161,7 @@ def build_document(
             + " | ".join(
                 (
                     f"`{task_id}`",
+                    str(base.get("difficulty", "")),
                     f"{base.get('task_success', 0)}/{base.get('valid_rollouts', 0)}",
                     _pct(base_rate),
                     f"{base.get('variance', 0.0):.6f}",
@@ -130,6 +174,28 @@ def build_document(
                 )
             )
             + " |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 按层汇总",
+            "",
+            "| 层 | 任务数 | baseline 平均通过率 | baseline 范围 | SFT 平均通过率 | "
+            "层内 20–80% 任务数 |",
+            "| --- | ---: | ---: | --- | ---: | ---: |",
+        ]
+    )
+    for tier in ("easy", "medium", "hard"):
+        tier_ids = [task_id for task_id in task_ids if baseline[task_id].get("difficulty") == tier]
+        if not tier_ids:
+            continue
+        base_values = [float(baseline[task_id]["pass_rate"]) for task_id in tier_ids]
+        sft_values = [float(sft[task_id]["pass_rate"]) for task_id in tier_ids]
+        lines.append(
+            f"| {tier} | {len(tier_ids)} | {sum(base_values) / len(base_values):.0%} | "
+            f"{min(base_values):.0%}–{max(base_values):.0%} | "
+            f"{sum(sft_values) / len(sft_values):.0%} | "
+            f"{sum(0.2 <= value <= 0.8 for value in base_values)}/{len(base_values)} |"
         )
     lines.extend(
         [
@@ -172,6 +238,18 @@ def build_document(
                     else "无"
                 )
             lines.append(f"| `{task_id}` | {cells[0]} | {cells[1]} |")
+    lines.extend(
+        [
+            "",
+            "## 统计口径",
+            "",
+            "- 本 pilot 只用于判断 baseline 是否形成区分度，不作为 1.5d 的正式证据。",
+            "- 每个任务 10 次 rollout，stable 门槛为 ≥6/10；staging 的 1 次 rollout 不判 stable。",
+            "- 零方差或全 0/全 1 时，McNemar 的单向不一致对、Bootstrap CI 和功效分析都会退化；"
+            "必须同时报告“不显著”和“不可估计”，不能只报 p 值。",
+            "- 进入 1.5c 的门禁是至少 3 个任务 baseline 通过率在 20–80%；不是“SFT <90%”。",
+        ]
+    )
     lines.extend(["", "## 判定", "", f"**{decision}**", ""])
     lines.extend(f"- {note}" for note in notes)
     lines.extend(
@@ -181,7 +259,8 @@ def build_document(
             "",
             "- 本报告只写实际 Kaggle rollout；没有跑成功的条件不写通过。",
             "- stable 只在每个任务 10 次 rollout 内计算，不替代 1.5c 的样本量/功效分析。",
-            "- 5 个 pilot 任务覆盖 5 个工作流族；结果不外推到全部 15 个任务。",
+            f"- {len(task_ids)} 个 pilot 任务覆盖 easy/medium/hard 各 2 个；"
+            "结果不外推到全部 15 个任务。",
             "",
         ]
     )
@@ -236,15 +315,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="render stage-1.5b pilot markdown")
     parser.add_argument("--summary", type=Path, required=True)
     parser.add_argument("--staging-summary", type=Path, default=None)
-    parser.add_argument("--out", type=Path, default=Path("docs/evidence/统计heldout_pilot.md"))
-    parser.add_argument("--csv-out", type=Path, default=Path("docs/evidence/统计heldout_pilot.csv"))
+    parser.add_argument(
+        "--out", type=Path, default=Path("docs/evidence/统计heldout_pilot_v2_round2.md")
+    )
+    parser.add_argument(
+        "--csv-out", type=Path, default=Path("docs/evidence/统计heldout_pilot_v2_round2.csv")
+    )
     parser.add_argument(
         "--runs-root",
         type=Path,
         default=None,
         help="optional full-run root containing baseline/runs.jsonl and sft/runs.jsonl",
     )
-    parser.add_argument("--kernel", default="autumnsq/lite-agent-stage-1-5-stats-pilot")
+    parser.add_argument("--kernel", default="autumnsq/lite-agent-stage-1-5-stats-pilot-v2-round-2")
+    parser.add_argument("--round-label", default="Round 2")
+    parser.add_argument("--final-round", action="store_true")
     parser.add_argument(
         "--adapter-sha",
         default="f5b685d4da795a783fbcb21b15880daebfa08c64b1661792f7e2c6caab29fea7",
@@ -276,6 +361,8 @@ def main() -> int:
         adapter_sha=args.adapter_sha,
         runs_by_condition=runs_by_condition,
         staging=staging,
+        round_label=args.round_label,
+        final_round=args.final_round,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(document, encoding="utf-8", newline="\n")

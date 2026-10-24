@@ -59,11 +59,11 @@ def build_document(manifest: dict[str, Any], teacher: dict[str, Any]) -> str:
         )
     teacher_by_id = {row["task_id"]: row for row in teacher["tasks"]}
     lines = [
-        "# 阶段 1.5a 任务构造",
+        "# 阶段 1.5a 任务构造 v2",
         "",
         f"- 冻结版本：`{manifest['version']}`",
         f"- 冻结时间：`{manifest['created_at']}`",
-        f"- 任务数：{manifest['task_count']}（5 个族 × 3 个变体）",
+        f"- 任务数：{manifest['task_count']}（5 个族 × 3 层：easy/medium/hard 各 5）",
         f"- task manifest SHA-256：`{manifest['manifest_sha256']}`",
         f"- fixture seed 范围：`{manifest['seed_range'][0]}–{manifest['seed_range'][1]}`",
         "- 任务 split：全部为 `test`，不进入 SFT train/val。",
@@ -100,9 +100,23 @@ def build_document(manifest: dict[str, Any], teacher: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
+            "## 三层设计",
+            "",
+            "| 层 | 任务数 | baseline 目标 | 说明 |",
+            "| --- | ---: | --- | --- |",
+        ]
+    )
+    for tier, target in manifest.get("tier_targets", {}).items():
+        lines.append(
+            f"| {tier} | {manifest.get('tiers', {}).get(tier, 0)} | {_cell(target)} | "
+            f"{_cell(target.split('：', 1)[1] if '：' in target else '')} |"
+        )
+    lines.extend(
+        [
+            "",
             "## 任务总表",
             "",
-            "| 任务 | 族 | 难度 | 上下文 | 策略检查 | 最少工具调用 | 步数上限 | fixture SHA-256 |",
+            "| 任务 | 族 | 层 | 上下文 | 策略检查 | 最少工具调用 | 步数上限 | fixture SHA-256 |",
             "| --- | --- | --- | --- | --- | ---: | ---: | --- |",
         ]
     )
@@ -162,7 +176,8 @@ def build_document(manifest: dict[str, Any], teacher: dict[str, Any]) -> str:
             "## 冻结与不重叠校验",
             "",
             "- `validate_stats_specs()` 校验 15 个任务 ID、prompt、fixture seed 唯一，"
-            "并与 train-v1..v5、dev/tuning、final-test-v2 的保留 ID/seed 集合求交；无交集。",
+            "并校验 5 个族 × 3 层（easy/medium/hard 各 5）；同时与 "
+            "train-v1..v5、dev/tuning、final-test-v2 的保留 ID/seed 集合求交；无交集。",
             "- 每个任务冻结前重新生成 fixture，并校验 prompt 引用的文件、行号、"
             "token 与 fixture 一致。",
             "- `fixture_sha256` 对目录内所有文件的相对路径和字节内容做 SHA-256；"
@@ -175,7 +190,9 @@ def build_document(manifest: dict[str, Any], teacher: dict[str, Any]) -> str:
             f"- 教师：`{teacher.get('teacher_model', 'deepseek-v4.1-flash')}`；"
             f"协议：`{teacher['teacher_protocol']}`。",
             "- 每任务 5 次 rollout；保留门槛为门禁通过率 ≥40% 且策略合规率 ≥60%。",
-            "- 保留 15/15；教师验证只证明任务可解，不代表 baseline/SFT 难度或训练增益。",
+            f"- 保留 {sum(1 for row in teacher['tasks'] if row['keep'])}/"
+            f"{len(teacher['tasks'])}；教师验证只证明任务可解，"
+            "不代表 baseline/SFT 难度或训练增益。",
             "",
             "## Pilot 任务",
             "",
@@ -191,7 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--manifest",
         type=Path,
-        default=Path("private/heldout_1_5/STATS_TASKS_FROZEN.json"),
+        default=Path("private/heldout_1_5_v2/STATS_TASKS_FROZEN.json"),
     )
     parser.add_argument(
         "--teacher-summary",
@@ -201,7 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("docs/evidence/阶段1.5a_任务构造.md"),
+        default=Path("docs/evidence/阶段1.5a_任务构造_v2.md"),
     )
     return parser
 

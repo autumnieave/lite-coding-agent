@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,7 +13,7 @@ from scripts.unified_eval import (
     oracle_calls,
     oracle_reply,
 )
-from training.kaggle.stats_pilot import summarize_condition
+from training.kaggle.stats_pilot import rollout_sampling, summarize_condition
 from training.stats_heldout import (
     PILOT_TASK_IDS,
     STATS_TASK_SPECS,
@@ -30,8 +31,10 @@ def test_stats_specs_are_disjoint_and_cover_five_families() -> None:
     assert len({spec.task_id for spec in STATS_TASK_SPECS}) == 15
     assert len({spec.fixture_seed for spec in STATS_TASK_SPECS}) == 15
     counts: dict[str, int] = {}
+    tiers: dict[str, int] = {}
     for spec in STATS_TASK_SPECS:
         counts[spec.family] = counts.get(spec.family, 0) + 1
+        tiers[spec.difficulty] = tiers.get(spec.difficulty, 0) + 1
         assert len(spec.checks) >= 5
         assert set(policy_check_names(spec)) <= {check.name for check in spec.checks}
     assert counts == {
@@ -41,7 +44,12 @@ def test_stats_specs_are_disjoint_and_cover_five_families() -> None:
         "edit_verify": 3,
         "audit_reconcile": 3,
     }
-    assert len(PILOT_TASK_IDS) == len(set(PILOT_TASK_IDS)) == 5
+    assert tiers == {"easy": 5, "medium": 5, "hard": 5}
+    assert len(PILOT_TASK_IDS) == len(set(PILOT_TASK_IDS)) == 6
+    pilot_tiers = Counter(
+        spec.difficulty for spec in STATS_TASK_SPECS if spec.task_id in PILOT_TASK_IDS
+    )
+    assert pilot_tiers == {"easy": 2, "medium": 2, "hard": 2}
 
 
 def test_stats_oracle_checks_pass_policy_gate(tmp_path: Path) -> None:
@@ -108,3 +116,20 @@ def test_pilot_summary_reports_sample_variance_and_degraded_errors() -> None:
     degraded = summarize_condition("sft", rows, [spec], {spec.task_id: 10})
     assert degraded["status"] == "degraded"
     assert degraded["errors"] == 1
+
+
+def test_rollout_sampling_uses_distinct_seed_only_when_sampling() -> None:
+    provider = SimpleNamespace(
+        seed=20261019,
+        sampling_config={
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "seed": 20261019,
+            "provider": "transformers-offline",
+        },
+    )
+    greedy = rollout_sampling(provider, 20261019, 3, 0.0)
+    sampled = rollout_sampling(provider, 20261019, 3, 0.7)
+    assert greedy["seed"] == 20261019
+    assert sampled["seed"] == 20261022
+    assert provider.seed == 20261022

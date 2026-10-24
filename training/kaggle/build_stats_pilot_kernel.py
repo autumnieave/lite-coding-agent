@@ -31,6 +31,9 @@ MODEL = Path("/kaggle/temp/qwen2.5-7b-instruct")
 OUT = Path("/kaggle/working/stats_pilot")
 ADAPTER_SHA256 = "f5b685d4da795a783fbcb21b15880daebfa08c64b1661792f7e2c6caab29fea7"
 PILOT_TASKS = "$pilot_tasks"
+TEMPERATURE = 0.7
+TOP_P = 0.9
+BASE_SEED = 20261019
 
 
 def status(payload: dict) -> None:
@@ -147,6 +150,12 @@ def run_pilot(adapter: Path, *, label: str, limit: int, rollouts: int, timeout: 
         "240",
         "--rollout-timeout",
         "300",
+        "--temperature",
+        str(TEMPERATURE),
+        "--top-p",
+        str(TOP_P),
+        "--seed",
+        str(BASE_SEED),
     ]
     if limit:
         command += ["--limit", str(limit)]
@@ -182,6 +191,12 @@ def main() -> int:
             "gpu": gpu,
             "adapter": str(adapter),
             "adapter_sha256": adapter_sha,
+            "sampling": {
+                "temperature": TEMPERATURE,
+                "top_p": TOP_P,
+                "base_seed": BASE_SEED,
+                "seed_policy": "base_seed_plus_rollout_index",
+            },
         }
     )
     if adapter_sha != ADAPTER_SHA256:
@@ -195,7 +210,7 @@ def main() -> int:
         )
         return 2
 
-    run_pilot(adapter, label="staging", limit=5, rollouts=1, timeout=2400)
+    run_pilot(adapter, label="staging", limit=6, rollouts=1, timeout=2400)
     staging = json.loads((OUT / "staging/pilot_summary.json").read_text(encoding="utf-8"))
     staging_conditions = list(staging["conditions"].values())
     staging_errors = sum(int(item.get("errors") or 0) for item in staging_conditions)
@@ -269,7 +284,7 @@ def build_kernel(
     (out_dir / "run.py").write_text(code, encoding="utf-8", newline="\n")
     metadata = {
         "id": kernel_id,
-        "title": "Lite Agent Stage 1.5 Stats Pilot",
+        "title": "Lite Agent Stage 1.5 Stats Pilot v2 Round 2",
         "code_file": "run.py",
         "language": "python",
         "kernel_type": "script",

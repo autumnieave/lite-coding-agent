@@ -1,0 +1,13 @@
+condition,task_id,family,difficulty,expected_rollouts,valid_rollouts,errors,task_success,pass_rate,variance,bernoulli_variance,within_steps_failures,stable_pass_6_of_10
+baseline,U-S15V2-01-EXTRACT-E,policy_extract,easy,10,10,0,10,1.0,0.0,0.0,0,True
+baseline,U-S15V2-05-SELECT-M,selective_aggregate,medium,10,10,0,0,0.0,0.0,0.0,3,False
+baseline,U-S15V2-08-SEARCH-M,search_collect,medium,10,10,0,0,0.0,0.0,0.0,0,False
+baseline,U-S15V2-09-SEARCH-H,search_collect,hard,10,10,0,0,0.0,0.0,0.0,0,False
+baseline,U-S15V2-10-EDIT-E,edit_verify,easy,10,10,0,10,1.0,0.0,0.0,0,True
+baseline,U-S15V2-15-AUDIT-H,audit_reconcile,hard,10,10,0,0,0.0,0.0,0.0,0,False
+sft,U-S15V2-01-EXTRACT-E,policy_extract,easy,10,10,0,10,1.0,0.0,0.0,0,True
+sft,U-S15V2-05-SELECT-M,selective_aggregate,medium,10,10,0,0,0.0,0.0,0.0,0,False
+sft,U-S15V2-08-SEARCH-M,search_collect,medium,10,10,0,0,0.0,0.0,0.0,0,False
+sft,U-S15V2-09-SEARCH-H,search_collect,hard,10,10,0,0,0.0,0.0,0.0,0,False
+sft,U-S15V2-10-EDIT-E,edit_verify,easy,10,10,0,8,0.8,0.177778,0.16,0,True
+sft,U-S15V2-15-AUDIT-H,audit_reconcile,hard,10,10,0,0,0.0,0.0,0.0,0,False

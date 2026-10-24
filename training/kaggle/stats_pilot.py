@@ -81,6 +81,19 @@ def _completed(path: Path) -> set[tuple[str, int]]:
     }
 
 
+def rollout_sampling(
+    provider: Any, base_seed: int, rollout: int, temperature: float | None
+) -> dict[str, Any]:
+    """Use a distinct seed per rollout when sampling, keeping greedy runs deterministic."""
+
+    if temperature is not None and temperature > 0:
+        seed = base_seed + rollout
+        if hasattr(provider, "seed"):
+            provider.seed = seed
+        return {**provider.sampling_config, "seed": seed}
+    return dict(provider.sampling_config)
+
+
 async def run_condition(
     condition: str,
     *,
@@ -124,13 +137,14 @@ async def run_condition(
     async def one(spec: Any, rollout: int) -> dict[str, Any]:
         async with semaphore:
             try:
+                sampling = rollout_sampling(active_provider, args.seed, rollout, args.temperature)
                 return await asyncio.wait_for(
                     run_once(
                         spec,
                         provider=active_provider,
                         rollout_index=rollout,
                         trace_dir=trace_dir,
-                        sampling_config=active_provider.sampling_config,
+                        sampling_config=sampling,
                         system_variant="s0",
                     ),
                     timeout=args.rollout_timeout,
@@ -179,6 +193,14 @@ async def run_condition(
     summary = summarize_condition(condition, all_rows, specs, expected_by_task)
     summary["duration_s"] = round(time.perf_counter() - started, 1)
     summary["adapter_path"] = adapter
+    summary["sampling"] = {
+        "temperature": args.temperature,
+        "top_p": args.top_p,
+        "base_seed": args.seed,
+        "seed_policy": "base_seed_plus_rollout_index"
+        if args.temperature is not None and args.temperature > 0
+        else "fixed_seed_all_rollouts",
+    }
     (out_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

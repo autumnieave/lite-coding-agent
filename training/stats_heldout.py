@@ -1,7 +1,10 @@
 """Stage 1.5 statistical held-out tasks built from train-v5 workflow patterns.
 
-The task set is deliberately disjoint from train-v1..v5, dev/tuning and
-final-test-v2. Five workflow patterns were mined from train-v5 traces:
+Version 2 keeps the five workflow families but gives every family one task per
+difficulty tier (easy / medium / hard).  The v1 task set is frozen separately
+under ``private/heldout_1_5`` and is intentionally not reused here.
+
+Workflow families:
 
 1. single read -> structured extraction;
 2. list_dir -> selective read -> aggregate;
@@ -33,21 +36,35 @@ from training.unified_dataset import (
     UnifiedTaskSpec,
 )
 
-STATS_VERSION = "stats-heldout-v1"
-STATS_SEED_BASE = 190000
+STATS_VERSION = "stats-heldout-v2"
+STATS_SEED_BASE = 191000
 PILOT_TASK_IDS = (
-    "U-S15-01-EXTRACT-A",
-    "U-S15-04-SELECT-A",
-    "U-S15-07-SEARCH-A",
-    "U-S15-10-EDIT-A",
-    "U-S15-13-AUDIT-A",
+    "U-S15V2-01-EXTRACT-E",
+    "U-S15V2-10-EDIT-E",
+    "U-S15V2-05-SELECT-M",
+    "U-S15V2-08-SEARCH-M",
+    "U-S15V2-09-SEARCH-H",
+    "U-S15V2-15-AUDIT-H",
 )
+TIER_BY_CASE = {"E": "easy", "M": "medium", "H": "hard"}
+TIER_TARGET = {
+    "easy": "baseline 60-80%：单步/两步 + 1 个约束",
+    "medium": "baseline 40-60%：多步 + 1 个策略约束",
+    "hard": "baseline 20-40%：多步 + 多约束 + 冲突/诱饵",
+}
 POLICY_CHECKS: dict[str, tuple[str, ...]] = {
     "policy_extract": ("policy_applied",),
     "selective_aggregate": ("files_exact", "no_excluded_read"),
     "search_collect": ("grep_used", "no_archive_read"),
     "edit_verify": ("edit_file_used", "only_target_line", "verified_after_edit"),
     "audit_reconcile": ("conflicts_exact", "sources_exact", "no_old_read"),
+}
+FAMILY_CODES = {
+    "policy_extract": "EXTRACT",
+    "selective_aggregate": "SELECT",
+    "search_collect": "SEARCH",
+    "edit_verify": "EDIT",
+    "audit_reconcile": "AUDIT",
 }
 
 
@@ -76,315 +93,393 @@ def _with_harness_checks(spec: UnifiedTaskSpec) -> UnifiedTaskSpec:
     )
 
 
-def _make_extract_specs() -> list[UnifiedTaskSpec]:
-    specs: list[UnifiedTaskSpec] = []
-    variants = (
-        (
-            "A",
-            "weak",
-            "project/s15/extract/a/settings.ini",
-            "读取 project/s15/extract/a/settings.ini。只处理未被 # 注释的 TOKEN 行，"
-            "最后一条 TOKEN 生效。输出严格 JSON，键必须恰好为 key、value、"
-            "active_count、ignored_count；active_count 是有效 TOKEN 行数，"
-            "ignored_count 是被注释的 TOKEN 行数。不要输出其他文字或代码围栏。",
-            (
-                ("S15-E01", "只处理未注释的 TOKEN 行；最后一条生效"),
-                ("S15-E02", "输出字段必须恰好为 key、value、active_count、ignored_count"),
-            ),
-        ),
-        (
-            "B",
-            "medium",
-            "project/s15/extract/b/policy.ini",
-            "读取 project/s15/extract/b/policy.ini。POLICY=FIRST_ACTIVE 表示取第一条"
-            "未注释的 LIMIT；输出严格 JSON，键必须恰好为 policy、winner、active_count。"
-            "active_count 是有效 LIMIT 行数。不要输出其他文字或代码围栏。",
-            (
-                ("S15-E03", "POLICY=FIRST_ACTIVE 时必须取第一条未注释 LIMIT"),
-                ("S15-E04", "输出字段必须恰好为 policy、winner、active_count"),
-            ),
-        ),
-        (
-            "C",
-            "medium",
-            "project/s15/extract/c/mode.ini",
-            "读取 project/s15/extract/c/mode.ini。先读 MODE：MODE=SAFE 时使用 SAFE_CODE，"
-            "MODE=FAST 时使用 FAST_CODE。输出严格 JSON，键必须恰好为 mode、code、rule；"
-            "rule 写实际采用的键名（SAFE_CODE 或 FAST_CODE）。不要输出其他文字或代码围栏。",
-            (
-                ("S15-E05", "MODE=SAFE 时必须使用 SAFE_CODE，不得使用 FAST_CODE"),
-                ("S15-E06", "输出字段必须恰好为 mode、code、rule"),
-            ),
-        ),
+def _task(
+    *,
+    index: int,
+    case: str,
+    family: str,
+    difficulty: str,
+    context_tier: str,
+    prompt: str,
+    constraints: tuple[tuple[str, str], ...],
+    required_tools: tuple[str, ...],
+    allowed_tools: tuple[str, ...],
+    min_tool_calls: int,
+    steps_limit: int,
+    checks: tuple[CheckSpec, ...],
+    **overrides: Any,
+) -> UnifiedTaskSpec:
+    return UnifiedTaskSpec(
+        task_id=f"U-S15V2-{index:02d}-{FAMILY_CODES[family]}-{case}",
+        split="test",
+        difficulty=difficulty,
+        context_tier=context_tier,
+        fixture_seed=STATS_SEED_BASE + index - 1,
+        family=family,
+        constraints=_constraints(*constraints),
+        user_turns=(prompt,),
+        required_tools=required_tools,
+        allowed_tools=allowed_tools,
+        min_tool_calls=min_tool_calls,
+        steps_limit=steps_limit,
+        checks=_checks(*checks),
+        **overrides,
     )
-    for index, (case, difficulty, path, prompt, constraints) in enumerate(variants, start=1):
-        specs.append(
-            UnifiedTaskSpec(
-                task_id=f"U-S15-{index:02d}-EXTRACT-{case}",
-                split="test",
-                difficulty=difficulty,
-                context_tier="short",
-                fixture_seed=STATS_SEED_BASE + index - 1,
-                family="policy_extract",
-                json_fixture_path=path,
-                constraints=_constraints(*constraints),
-                user_turns=(prompt,),
-                required_tools=("read_file",),
-                allowed_tools=("read_file",),
-                min_tool_calls=1,
-                steps_limit=3,
-                checks=_checks(
-                    CheckSpec("json_valid", "format", "整段回复可被严格 JSON 解析"),
-                    CheckSpec("exact_keys", "semantic", "JSON 键名恰好符合要求"),
-                    CheckSpec("value_correct", "semantic", "主值正确"),
-                    CheckSpec("policy_applied", "policy", "策略字段全部正确"),
-                    CheckSpec("no_fence", "format", "无 markdown 代码围栏"),
-                ),
-            )
-        )
+
+
+def _make_extract_specs() -> list[UnifiedTaskSpec]:
+    specs = [
+        _task(
+            index=1,
+            case="E",
+            family="policy_extract",
+            difficulty="easy",
+            context_tier="short",
+            prompt=(
+                "读取 project/s15v2/extract/e/app.ini。只处理未被 # 注释的 TIMEOUT 行，"
+                "最后一条生效。输出严格 JSON，键必须恰好为 timeout；timeout 的值是最后"
+                "一条未注释 TIMEOUT 行的整数，键名不是文件名，也不要输出所有值的列表。"
+                "不要输出其他文字或代码围栏。"
+            ),
+            constraints=(
+                ("S15V2-E01", "只处理未注释的 TIMEOUT 行；最后一条生效"),
+                ("S15V2-E02", "输出键必须恰好为 timeout，且值是最后一条未注释 TIMEOUT 的整数"),
+            ),
+            required_tools=("read_file",),
+            allowed_tools=("read_file",),
+            min_tool_calls=1,
+            steps_limit=3,
+            checks=(
+                CheckSpec("json_valid", "format", "整段回复可被严格 JSON 解析"),
+                CheckSpec("exact_keys", "semantic", "JSON 键名恰好符合要求"),
+                CheckSpec("value_correct", "semantic", "主值正确"),
+                CheckSpec("policy_applied", "policy", "策略字段全部正确"),
+                CheckSpec("no_fence", "format", "无 markdown 代码围栏"),
+            ),
+            json_fixture_path="project/s15v2/extract/e/app.ini",
+        ),
+        _task(
+            index=2,
+            case="M",
+            family="policy_extract",
+            difficulty="medium",
+            context_tier="short",
+            prompt=(
+                "读取 project/s15v2/extract/m/policy.ini。POLICY=FIRST_ACTIVE 表示取第一条"
+                "未注释的 LIMIT。输出严格 JSON，键必须恰好为 policy、winner、active_count。"
+                "winner 是整数；active_count 是有效 LIMIT 行数。不要输出其他文字或代码围栏。"
+            ),
+            constraints=(
+                ("S15V2-E03", "POLICY=FIRST_ACTIVE 时必须取第一条未注释 LIMIT"),
+                ("S15V2-E04", "winner 必须是整数，active_count 是有效 LIMIT 行数"),
+            ),
+            required_tools=("read_file",),
+            allowed_tools=("read_file",),
+            min_tool_calls=1,
+            steps_limit=3,
+            checks=(
+                CheckSpec("json_valid", "format", "整段回复可被严格 JSON 解析"),
+                CheckSpec("exact_keys", "semantic", "JSON 键名恰好符合要求"),
+                CheckSpec("value_correct", "semantic", "主值正确"),
+                CheckSpec("policy_applied", "policy", "策略字段全部正确"),
+                CheckSpec("no_fence", "format", "无 markdown 代码围栏"),
+            ),
+            json_fixture_path="project/s15v2/extract/m/policy.ini",
+        ),
+        _task(
+            index=3,
+            case="H",
+            family="policy_extract",
+            difficulty="hard",
+            context_tier="short",
+            prompt=(
+                "读取 project/s15v2/extract/h/mode.ini。先读 MODE：MODE=SAFE 时使用 SAFE_CODE，"
+                "MODE=FAST 时使用 FAST_CODE。输出严格 JSON，键必须恰好为 mode、code、rule；"
+                "rule 写实际采用的键名（SAFE_CODE 或 FAST_CODE）。不要输出其他文字或代码围栏。"
+            ),
+            constraints=(
+                ("S15V2-E05", "MODE=SAFE 时必须使用 SAFE_CODE，不得使用 FAST_CODE"),
+                ("S15V2-E06", "rule 必须写实际采用的键名"),
+            ),
+            required_tools=("read_file",),
+            allowed_tools=("read_file",),
+            min_tool_calls=1,
+            steps_limit=3,
+            checks=(
+                CheckSpec("json_valid", "format", "整段回复可被严格 JSON 解析"),
+                CheckSpec("exact_keys", "semantic", "JSON 键名恰好符合要求"),
+                CheckSpec("value_correct", "semantic", "主值正确"),
+                CheckSpec("policy_applied", "policy", "策略字段全部正确"),
+                CheckSpec("no_fence", "format", "无 markdown 代码围栏"),
+            ),
+            json_fixture_path="project/s15v2/extract/h/mode.ini",
+        ),
+    ]
     return specs
 
 
 def _make_select_specs() -> list[UnifiedTaskSpec]:
-    specs: list[UnifiedTaskSpec] = []
-    variants = (
-        (
-            "A",
-            "medium",
-            "project/s15/select/a",
-            "先列出 project/s15/select/a。只读取 .log 文件，排除 *.draft.log；"
-            "把每个选中文件中的整数逐行求和。输出严格 JSON：files（工作区相对路径，"
-            "按小写字母序）、total（整数和）、selected_count（选中文件数）。"
-            "不要读取 notes.txt 或 _index.txt。整段回复只能是一个 JSON 对象，"
-            "不得输出代码围栏、解释文字或前后缀。",
-        ),
-        (
-            "B",
-            "medium",
-            "project/s15/select/b",
-            "先列出 project/s15/select/b。只读取 partNN.txt，排除 *_old.txt 和非 .txt "
-            "文件；total 为所有选中文件的行数之和。输出严格 JSON：files（工作区相对路径，"
-            "按小写字母序）、total（整数）、selected_count。整段回复只能是一个 JSON 对象，"
-            "不得输出代码围栏、解释文字或前后缀。",
-        ),
-        (
-            "C",
-            "strong",
-            "project/s15/select/c",
-            "先列出 project/s15/select/c。只读取 .csv 文件，排除 tmp_*.csv 和非 .csv 文件；"
-            "把每个选中文件中的整数逐行求和。输出严格 JSON：files（工作区相对路径，"
-            "按小写字母序）、total（整数和）、selected_count。整段回复只能是一个 JSON 对象，"
-            "不得输出代码围栏、解释文字或前后缀。",
-        ),
+    common_checks = (
+        CheckSpec("json_valid", "format", "严格 JSON"),
+        CheckSpec("files_exact", "semantic", "选中文件集合完全正确"),
+        CheckSpec("total_correct", "semantic", "聚合值正确"),
+        CheckSpec("selected_count_correct", "semantic", "选中文件数正确"),
+        CheckSpec("sorted", "format", "files 按小写字母序"),
+        CheckSpec("no_excluded_read", "policy", "没有读取排除文件"),
     )
-    for offset, (case, difficulty, directory, prompt) in enumerate(variants, start=4):
-        specs.append(
-            UnifiedTaskSpec(
-                task_id=f"U-S15-{offset:02d}-SELECT-{case}",
-                split="test",
-                difficulty=difficulty,
-                context_tier="medium",
-                fixture_seed=STATS_SEED_BASE + offset - 1,
-                family="selective_aggregate",
-                path_directory=directory,
-                constraints=_constraints(
-                    ("S15-S01", "只读取目标目录内匹配规则的文件；排除项不得读取"),
-                    ("S15-S02", "files 必须按小写字母序"),
-                ),
-                user_turns=(prompt,),
-                required_tools=("list_dir", "read_file"),
-                allowed_tools=("list_dir", "read_file"),
-                min_tool_calls=4,
-                steps_limit=7,
-                checks=_checks(
-                    CheckSpec("json_valid", "format", "严格 JSON"),
-                    CheckSpec("files_exact", "semantic", "选中文件集合完全正确"),
-                    CheckSpec("total_correct", "semantic", "聚合值正确"),
-                    CheckSpec("selected_count_correct", "semantic", "选中文件数正确"),
-                    CheckSpec("sorted", "format", "files 按小写字母序"),
-                    CheckSpec("no_excluded_read", "policy", "没有读取排除文件"),
-                ),
-            )
-        )
-    return specs
+    common_constraints = (
+        ("S15V2-S01", "只读取匹配规则的文件；排除项不得读取"),
+        ("S15V2-S02", "files 必须是完整工作区相对路径并按小写字母序"),
+    )
+    return [
+        _task(
+            index=4,
+            case="E",
+            family="selective_aggregate",
+            difficulty="easy",
+            context_tier="medium",
+            prompt=(
+                "先列出 project/s15v2/select/e。只读取 .log 文件，notes.txt 不得读取。"
+                "把每个选中文件中的整数逐行求和。输出严格 JSON：files（必须是完整工作区"
+                "相对路径，例如 project/s15v2/select/e/alpha.log，按小写字母序）、total"
+                "（整数和）、selected_count（选中文件数）。整段回复只能是一个 JSON 对象，"
+                "不得输出代码围栏、解释文字或前后缀。"
+            ),
+            constraints=common_constraints,
+            required_tools=("list_dir", "read_file"),
+            allowed_tools=("list_dir", "read_file"),
+            min_tool_calls=3,
+            steps_limit=5,
+            checks=common_checks,
+            path_directory="project/s15v2/select/e",
+        ),
+        _task(
+            index=5,
+            case="M",
+            family="selective_aggregate",
+            difficulty="medium",
+            context_tier="medium",
+            prompt=(
+                "先列出 project/s15v2/select/m。只读取 .log 文件，排除 *.draft.log；"
+                "notes.txt 和 _index.txt 不得读取。把每个选中文件中的整数逐行求和。"
+                "输出严格 JSON：files（完整工作区相对路径，按小写字母序）、total（整数和）、"
+                "selected_count。整段回复只能是一个 JSON 对象，不得输出代码围栏、解释文字"
+                "或前后缀。"
+            ),
+            constraints=common_constraints,
+            required_tools=("list_dir", "read_file"),
+            allowed_tools=("list_dir", "read_file"),
+            min_tool_calls=4,
+            steps_limit=6,
+            checks=common_checks,
+            path_directory="project/s15v2/select/m",
+        ),
+        _task(
+            index=6,
+            case="H",
+            family="selective_aggregate",
+            difficulty="hard",
+            context_tier="medium",
+            prompt=(
+                "先列出 project/s15v2/select/h。只读取 .csv 文件，排除 tmp_*.csv 和非 .csv "
+                "文件。把每个选中文件中的整数逐行求和。输出严格 JSON：files（完整工作区"
+                "相对路径，按小写字母序）、total（整数和）、selected_count。整段回复只能"
+                "是一个 JSON 对象，不得输出代码围栏、解释文字或前后缀。"
+            ),
+            constraints=common_constraints,
+            required_tools=("list_dir", "read_file"),
+            allowed_tools=("list_dir", "read_file"),
+            min_tool_calls=4,
+            steps_limit=6,
+            checks=common_checks,
+            path_directory="project/s15v2/select/h",
+        ),
+    ]
 
 
 def _make_search_specs() -> list[UnifiedTaskSpec]:
-    specs: list[UnifiedTaskSpec] = []
-    variants = (
-        (
-            "A",
-            "medium",
-            "project/s15/search/a",
-            "在 project/s15/search/a 下使用 grep 搜索 NEEDLE-；只读取命中文件，"
-            "排除 archive/ 下的内容；收集 NEEDLE- 后的整数 ID（去重、升序）。"
-            "输出严格 JSON：ids（整数数组）、files（工作区相对路径，按小写字母序）、"
-            "count。必须先调用 grep。整段回复只能是一个 JSON 对象，不得输出代码围栏、"
-            "解释文字或前后缀。",
-        ),
-        (
-            "B",
-            "strong",
-            "project/s15/search/b",
-            "在 project/s15/search/b 下使用 grep 搜索 FLAG-；只读取命中文件，"
-            "排除 archive/；收集 FLAG- 后的整数 ID（去重、升序）。输出严格 JSON："
-            "ids、files（工作区相对路径，升序）、count。必须先调用 grep。整段回复只能是"
-            "一个 JSON 对象，不得输出代码围栏、解释文字或前后缀。",
-        ),
-        (
-            "C",
-            "strong",
-            "project/s15/search/c",
-            "在 project/s15/search/c 下使用 grep 搜索正则 ^KEY-；只读取命中文件，"
-            "排除 archive/；收集 KEY- 后的整数 ID（去重、升序）。输出严格 JSON："
-            "ids、files（工作区相对路径，升序）、count。必须先调用 grep。整段回复只能是"
-            "一个 JSON 对象，不得输出代码围栏、解释文字或前后缀。",
-        ),
+    common_checks = (
+        CheckSpec("json_valid", "format", "严格 JSON"),
+        CheckSpec("ids_exact", "semantic", "ID 集合完全正确"),
+        CheckSpec("files_exact", "semantic", "命中文件集合完全正确"),
+        CheckSpec("sorted", "format", "ids 与 files 均升序"),
+        CheckSpec("count_correct", "semantic", "count 正确"),
+        CheckSpec("grep_used", "policy", "使用了 grep"),
+        CheckSpec("no_archive_read", "policy", "没有读取 archive/"),
     )
-    for offset, (case, difficulty, directory, prompt) in enumerate(variants, start=7):
-        specs.append(
-            UnifiedTaskSpec(
-                task_id=f"U-S15-{offset:02d}-SEARCH-{case}",
-                split="test",
-                difficulty=difficulty,
-                context_tier="medium",
-                fixture_seed=STATS_SEED_BASE + offset - 1,
-                family="search_collect",
-                path_directory=directory,
-                constraints=_constraints(
-                    ("S15-G01", "必须使用 grep 定位，不得仅凭 list_dir 猜测"),
-                    ("S15-G02", "不得读取 archive/ 下的文件"),
-                ),
-                user_turns=(prompt,),
-                required_tools=("grep", "read_file"),
-                allowed_tools=("grep", "read_file", "list_dir"),
-                min_tool_calls=4,
-                steps_limit=7,
-                checks=_checks(
-                    CheckSpec("json_valid", "format", "严格 JSON"),
-                    CheckSpec("ids_exact", "semantic", "ID 集合完全正确"),
-                    CheckSpec("files_exact", "semantic", "命中文件集合完全正确"),
-                    CheckSpec("sorted", "format", "ids 与 files 均升序"),
-                    CheckSpec("count_correct", "semantic", "count 正确"),
-                    CheckSpec("grep_used", "policy", "使用了 grep"),
-                    CheckSpec("no_archive_read", "policy", "没有读取 archive/"),
-                ),
-            )
-        )
-    return specs
+    common_constraints = (
+        ("S15V2-G01", "必须使用 grep 定位，不得仅凭 list_dir 猜测"),
+        ("S15V2-G02", "必须读取每个命中文件，且不得读取 archive/"),
+    )
+    return [
+        _task(
+            index=7,
+            case="E",
+            family="search_collect",
+            difficulty="easy",
+            context_tier="medium",
+            prompt=(
+                "在 project/s15v2/search/e 下使用 grep 搜索 NEEDLE-[0-9]+。grep 只负责"
+                "定位；必须读取每个命中文件后再汇总。收集 NEEDLE- 后的整数 ID（去重、"
+                "升序）。输出严格 JSON：ids（整数数组）、files（完整工作区相对路径，按"
+                "小写字母序）、count。必须先调用 grep。整段回复只能是一个 JSON 对象，"
+                "不得输出代码围栏、解释文字或前后缀。"
+            ),
+            constraints=common_constraints,
+            required_tools=("grep", "read_file"),
+            allowed_tools=("grep", "read_file", "list_dir"),
+            min_tool_calls=2,
+            steps_limit=4,
+            checks=common_checks,
+            path_directory="project/s15v2/search/e",
+        ),
+        _task(
+            index=8,
+            case="M",
+            family="search_collect",
+            difficulty="medium",
+            context_tier="medium",
+            prompt=(
+                "在 project/s15v2/search/m 下使用 grep 搜索 NEEDLE-；只读取命中文件，"
+                "排除 archive/ 下的内容；收集 NEEDLE- 后的整数 ID（去重、升序）。"
+                "输出严格 JSON：ids（整数数组）、files（完整工作区相对路径，按小写字母"
+                "序）、count。必须先调用 grep，并读取每个命中文件。整段回复只能是一个 "
+                "JSON 对象，不得输出代码围栏、解释文字或前后缀。"
+            ),
+            constraints=common_constraints,
+            required_tools=("grep", "read_file"),
+            allowed_tools=("grep", "read_file", "list_dir"),
+            min_tool_calls=4,
+            steps_limit=6,
+            checks=common_checks,
+            path_directory="project/s15v2/search/m",
+        ),
+        _task(
+            index=9,
+            case="H",
+            family="search_collect",
+            difficulty="hard",
+            context_tier="medium",
+            prompt=(
+                "在 project/s15v2/search/h 下使用 grep 搜索正则 ^KEY-；只读取命中文件，"
+                "排除 archive/；收集行首 KEY- 后的整数 ID（去重、升序）。输出严格 JSON："
+                "ids、files（完整工作区相对路径，升序）、count。必须先调用 grep，并读取"
+                "每个命中文件。整段回复只能是一个 JSON 对象，不得输出代码围栏、解释文字"
+                "或前后缀。"
+            ),
+            constraints=common_constraints,
+            required_tools=("grep", "read_file"),
+            allowed_tools=("grep", "read_file", "list_dir"),
+            min_tool_calls=4,
+            steps_limit=6,
+            checks=common_checks,
+            path_directory="project/s15v2/search/h",
+        ),
+    ]
 
 
 def _make_edit_specs() -> list[UnifiedTaskSpec]:
-    specs: list[UnifiedTaskSpec] = []
-    variants = (
-        ("A", "medium", "project/s15/edit/a/part01.txt", 17, "FIX-S15A"),
-        ("B", "strong", "project/s15/edit/b/part02.txt", 29, "FIX-S15B"),
-        ("C", "strong", "project/s15/edit/c/part03.txt", 41, "FIX-S15C"),
+    common_checks = (
+        CheckSpec("edit_file_used", "policy", "使用 edit_file 完成修改"),
+        CheckSpec("only_target_line", "policy", "目标行外没有变化"),
+        CheckSpec("token_replaced", "semantic", "目标 token 已替换"),
+        CheckSpec("line_count_preserved", "semantic", "行数保持不变"),
+        CheckSpec("verified_after_edit", "policy", "修改后重新读取验证"),
+        CheckSpec("json_answer", "format", "最终回答严格 JSON"),
     )
-    for offset, (case, difficulty, path, line, token) in enumerate(variants, start=10):
-        prompt = (
-            f"读取 {path}，把第 {line} 行（从 1 开始计数）的 token 改成 {token}，"
-            "且只改这一行。修改后必须再次读取同一文件确认。最后输出严格 JSON："
-            f"changed（布尔 true）、line（整数 {line}）、verified（布尔 true）。"
-            "禁止使用 write_file。整段回复只能是一个 JSON 对象，不得输出代码围栏、"
-            "解释文字或前后缀。"
-        )
+    variants = (
+        ("E", "easy", "short", "project/s15v2/edit/e/notes.txt", 7, "FIX-E2", 4),
+        ("M", "medium", "medium", "project/s15v2/edit/m/part02.txt", 17, "FIX-M2", 5),
+        ("H", "hard", "long", "project/s15v2/edit/h/part03.txt", 41, "FIX-H2", 5),
+    )
+    specs: list[UnifiedTaskSpec] = []
+    for index, (case, difficulty, context, path, line, token, steps) in enumerate(
+        variants, start=10
+    ):
+        old_token = f"OLD-S15{case}"
         specs.append(
-            UnifiedTaskSpec(
-                task_id=f"U-S15-{offset:02d}-EDIT-{case}",
-                split="test",
-                difficulty=difficulty,
-                context_tier="medium" if case != "C" else "long",
-                fixture_seed=STATS_SEED_BASE + offset - 1,
+            _task(
+                index=index,
+                case=case,
                 family="edit_verify",
-                edit_path=path,
-                edit_target_line=line,
-                edit_new_token=token,
-                constraints=_constraints(
-                    ("S15-K01", "修改已有文件必须使用 edit_file，禁止 write_file"),
-                    ("S15-K02", "只允许改动目标行"),
-                    ("S15-K03", "修改后必须重新读取同一文件验证"),
+                difficulty=difficulty,
+                context_tier=context,
+                prompt=(
+                    f"读取 {path}，把第 {line} 行（从 1 开始计数）中完整旧 token "
+                    f"{old_token} 改成 {token}，且只改这一行。调用 edit_file 时 old_string "
+                    f"必须恰好是 {old_token}（不能只写 token），new_string 必须是 {token}。"
+                    "修改后必须再次读取同一文件确认。最后输出严格 JSON：changed（布尔 true）、"
+                    f"line（整数 {line}）、verified（布尔 true）。禁止使用 write_file。"
+                    "整段回复只能是一个 JSON 对象，不得输出代码围栏、解释文字或前后缀。"
                 ),
-                user_turns=(prompt,),
+                constraints=(
+                    ("S15V2-K01", "修改已有文件必须使用 edit_file，禁止 write_file"),
+                    ("S15V2-K02", "只允许改动目标行"),
+                    ("S15V2-K03", "修改后必须重新读取同一文件验证"),
+                ),
                 required_tools=("read_file", "edit_file"),
                 allowed_tools=("read_file", "edit_file"),
                 min_tool_calls=3,
-                steps_limit=6,
-                checks=_checks(
-                    CheckSpec("edit_file_used", "policy", "使用 edit_file 完成修改"),
-                    CheckSpec("only_target_line", "policy", "目标行外没有变化"),
-                    CheckSpec("token_replaced", "semantic", "目标 token 已替换"),
-                    CheckSpec("line_count_preserved", "semantic", "行数保持不变"),
-                    CheckSpec("verified_after_edit", "policy", "修改后重新读取验证"),
-                    CheckSpec("json_answer", "format", "最终回答严格 JSON"),
-                ),
+                steps_limit=steps,
+                checks=common_checks,
+                edit_path=path,
+                edit_target_line=line,
+                edit_new_token=token,
             )
         )
     return specs
 
 
 def _make_audit_specs() -> list[UnifiedTaskSpec]:
-    specs: list[UnifiedTaskSpec] = []
-    variants = (
-        (
-            "A",
-            "project/s15/audit/a",
-            "先列出 project/s15/audit/a，读取目录顶层的 shard*.txt（不要读取 _old/ "
-            "或非 shard 文件）。每个 KEY=value;REV=n 行按 KEY 取 REV 最大的值；"
-            "REV 相同但值不同时不要选择，把 KEY 放进 conflicts。输出严格 JSON："
-            "resolved（对象）、conflicts（升序数组）、sources（读取的工作区相对路径，"
-            "升序）、conflict_count（整数）。conflicts 必须是字符串数组，sources 必须是"
-            "形如 project/s15/audit/a/shard01.txt 的完整路径。整段回复只能是一个 JSON 对象，"
-            "不得输出代码围栏、解释文字或前后缀。只读不写。",
-        ),
-        (
-            "B",
-            "project/s15/audit/b",
-            "先列出 project/s15/audit/b，读取顶层 shard*.txt，排除 _old/。"
-            "每个 KEY=value;REV=n 行按 KEY 取 REV 最大的值；REV 并列且值不同时"
-            "列入 conflicts，不得任选。输出严格 JSON：resolved、conflicts、sources、"
-            "conflict_count。conflicts 必须是字符串数组，sources 必须是完整工作区相对路径。"
-            "整段回复只能是一个 JSON 对象，不得输出代码围栏、解释文字或前后缀。只读不写。",
-        ),
-        (
-            "C",
-            "project/s15/audit/c",
-            "先列出 project/s15/audit/c，读取顶层 shard*.txt，排除 _old/ 和非 shard "
-            "文件。每个 KEY=value;REV=n 行按 KEY 取 REV 最大的值；REV 并列且值不同时"
-            "列入 conflicts，不得任选。输出严格 JSON：resolved、conflicts（升序）、"
-            "sources（升序）、conflict_count。conflicts 必须是字符串数组，sources 必须是"
-            "形如 project/s15/audit/c/shard01.txt 的完整路径。整段回复只能是一个 JSON 对象，"
-            "不得输出代码围栏、解释文字或前后缀。只读不写。",
-        ),
+    common_checks = (
+        CheckSpec("json_valid", "format", "严格 JSON"),
+        CheckSpec("resolved_exact", "semantic", "resolved 完全正确"),
+        CheckSpec("conflicts_exact", "policy", "冲突键集合完全正确"),
+        CheckSpec("sources_exact", "policy", "读取来源集合完全正确"),
+        CheckSpec("conflict_count_correct", "semantic", "冲突数量正确"),
+        CheckSpec("no_old_read", "policy", "没有读取 _old/"),
     )
-    for offset, (case, directory, prompt) in enumerate(variants, start=13):
+    common_constraints = (
+        ("S15V2-A01", "只读，不得写入任何文件"),
+        ("S15V2-A02", "只读取顶层 shard*.txt，不得读取 _old/ 或非 shard 文件"),
+        ("S15V2-A03", "冲突键不得任选一个，必须列入 conflicts"),
+    )
+    common_tail = (
+        "resolved 的 value 只写等号后、分号前的部分，必须去掉 ;REV=n 后缀"
+        "（例如 ALPHA=a1;REV=1 在 resolved 中是 ALPHA: a1）。没有冲突时 conflicts "
+        "必须是空数组。conflicts 必须是字符串数组；sources 必须是读取的全部 shard "
+        "完整工作区相对路径，按升序。输出严格 JSON：resolved（对象）、conflicts、"
+        "sources、conflict_count（整数）。整段回复只能是一个 JSON 对象，不得输出代码"
+        "围栏、解释文字或前后缀。只读不写。"
+    )
+    variants = (
+        ("E", "easy", "short", "project/s15v2/audit/e", 3, 5),
+        ("M", "medium", "medium", "project/s15v2/audit/m", 4, 7),
+        ("H", "hard", "long", "project/s15v2/audit/h", 6, 9),
+    )
+    specs: list[UnifiedTaskSpec] = []
+    for index, (case, difficulty, context, directory, calls, steps) in enumerate(
+        variants, start=13
+    ):
         specs.append(
-            UnifiedTaskSpec(
-                task_id=f"U-S15-{offset:02d}-AUDIT-{case}",
-                split="test",
-                difficulty="strong",
-                context_tier="long",
-                fixture_seed=STATS_SEED_BASE + offset - 1,
+            _task(
+                index=index,
+                case=case,
                 family="audit_reconcile",
-                path_directory=directory,
-                constraints=_constraints(
-                    ("S15-A01", "只读，不得写入任何文件"),
-                    ("S15-A02", "只读取顶层 shard*.txt，不得读取 _old/"),
-                    ("S15-A03", "冲突键不得任选一个，必须列入 conflicts"),
+                difficulty=difficulty,
+                context_tier=context,
+                prompt=(
+                    f"先列出 {directory}，读取目录顶层的 shard*.txt（不要读取 _old/ 或非 "
+                    f"shard 文件）。每个 KEY=value;REV=n 行按 KEY 取 REV 最大的值；"
+                    f"REV 相同但值不同时不要选择，把 KEY 放进 conflicts。{common_tail}"
                 ),
-                user_turns=(prompt,),
+                constraints=common_constraints,
                 required_tools=("list_dir", "read_file"),
                 allowed_tools=("list_dir", "read_file"),
-                min_tool_calls=5 if case != "C" else 6,
-                steps_limit=9,
-                checks=_checks(
-                    CheckSpec("json_valid", "format", "严格 JSON"),
-                    CheckSpec("resolved_exact", "semantic", "resolved 完全正确"),
-                    CheckSpec("conflicts_exact", "policy", "冲突键集合完全正确"),
-                    CheckSpec("sources_exact", "policy", "读取来源集合完全正确"),
-                    CheckSpec("conflict_count_correct", "semantic", "冲突数量正确"),
-                    CheckSpec("no_old_read", "policy", "没有读取 _old/"),
-                ),
+                min_tool_calls=calls,
+                steps_limit=steps,
+                checks=common_checks,
+                path_directory=directory,
             )
         )
     return specs
@@ -450,16 +545,22 @@ def validate_stats_specs() -> None:
     if overlap_seeds:
         raise ValueError(f"stats held-out overlaps existing seeds: {sorted(overlap_seeds)}")
     family_counts: dict[str, int] = {}
+    tier_counts: dict[str, int] = {}
     for spec in specs:
         family_counts[spec.family] = family_counts.get(spec.family, 0) + 1
-        if not spec.task_id.startswith("U-S15-"):
-            raise ValueError(f"{spec.task_id} must use U-S15- prefix")
+        tier_counts[spec.difficulty] = tier_counts.get(spec.difficulty, 0) + 1
+        if not spec.task_id.startswith("U-S15V2-"):
+            raise ValueError(f"{spec.task_id} must use U-S15V2- prefix")
         if spec.split != "test":
             raise ValueError(f"{spec.task_id} split must be test")
         if spec.tuning_dimension:
             raise ValueError(f"{spec.task_id} must not set tuning_dimension")
         if spec.family not in POLICY_CHECKS:
             raise ValueError(f"{spec.task_id} unknown family {spec.family}")
+        if spec.difficulty not in TIER_TARGET:
+            raise ValueError(f"{spec.task_id} unknown difficulty tier {spec.difficulty}")
+        if spec.task_id.rsplit("-", 1)[-1] not in TIER_BY_CASE:
+            raise ValueError(f"{spec.task_id} case must be E/M/H")
         if spec.min_tool_calls > spec.steps_limit:
             raise ValueError(f"{spec.task_id} min_tool_calls exceeds steps_limit")
         if set(spec.required_tools) - set(spec.allowed_tools):
@@ -469,22 +570,27 @@ def validate_stats_specs() -> None:
             raise ValueError(f"{spec.task_id} missing policy checks")
         if len(spec.checks) < 5:
             raise ValueError(f"{spec.task_id} needs at least five checks")
-    expected_counts = {
+    expected_families = {
         "policy_extract": 3,
         "selective_aggregate": 3,
         "search_collect": 3,
         "edit_verify": 3,
         "audit_reconcile": 3,
     }
-    if family_counts != expected_counts:
+    if family_counts != expected_families:
         raise ValueError(f"stats family counts mismatch: {family_counts}")
-    if len(set(PILOT_TASK_IDS)) != 5 or not set(PILOT_TASK_IDS) <= set(ids):
-        raise ValueError("pilot task IDs must be five unique stats tasks")
-    pilot_families = {spec.family for spec in specs if spec.task_id in set(PILOT_TASK_IDS)}
-    if pilot_families != set(expected_counts):
+    if tier_counts != {"easy": 5, "medium": 5, "hard": 5}:
+        raise ValueError(f"stats tier counts mismatch: {tier_counts}")
+    if len(set(PILOT_TASK_IDS)) != 6 or not set(PILOT_TASK_IDS) <= set(ids):
+        raise ValueError("pilot task IDs must be six unique stats tasks")
+    pilot_specs = [spec for spec in specs if spec.task_id in set(PILOT_TASK_IDS)]
+    pilot_tiers = {spec.difficulty: 0 for spec in pilot_specs}
+    for spec in pilot_specs:
+        pilot_tiers[spec.difficulty] += 1
+    if pilot_tiers != {"easy": 2, "medium": 2, "hard": 2}:
+        raise ValueError(f"pilot tasks must be two per tier: {pilot_tiers}")
+    if {spec.family for spec in pilot_specs} != set(expected_families):
         raise ValueError("pilot tasks must cover all five workflow families")
-    if {spec.difficulty for spec in specs} != {"weak", "medium", "strong"}:
-        raise ValueError("stats held-out must cover weak/medium/strong")
     if {spec.context_tier for spec in specs} != {"short", "medium", "long"}:
         raise ValueError("stats held-out must cover short/medium/long contexts")
 
@@ -568,6 +674,7 @@ def freeze_stats_tasks(out_dir: Path) -> dict[str, Any]:
                 "task_id": spec.task_id,
                 "family": spec.family,
                 "difficulty": spec.difficulty,
+                "tier_target": TIER_TARGET[spec.difficulty],
                 "context_tier": spec.context_tier,
                 "fixture_seed": spec.fixture_seed,
                 "fixture_dir": (Path("fixtures") / spec.task_id).as_posix(),
@@ -587,9 +694,14 @@ def freeze_stats_tasks(out_dir: Path) -> dict[str, Any]:
         "manifest_sha256": manifest_sha,
         "seed_range": [STATS_SEED_BASE, STATS_SEED_BASE + len(STATS_TASK_SPECS) - 1],
         "pilot_task_ids": list(PILOT_TASK_IDS),
+        "tier_targets": TIER_TARGET,
         "families": {
             family: sum(1 for spec in STATS_TASK_SPECS if spec.family == family)
             for family in POLICY_CHECKS
+        },
+        "tiers": {
+            tier: sum(1 for spec in STATS_TASK_SPECS if spec.difficulty == tier)
+            for tier in TIER_TARGET
         },
         "tasks": task_entries,
         "workflow_sources": {

@@ -147,6 +147,7 @@ class Fixture:
     decoy_paths: tuple[str, ...] = ()
     conflict_mode: str = ""
     expected_json: dict[str, Any] | None = None
+    primary_key: str = ""
 
 
 class RecordingExecutor:
@@ -185,23 +186,18 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
     if suffix == "policy_extract":
         rel = spec.json_fixture_path or "project/s15/extract/settings.ini"
         case = spec.task_id.rsplit("-", 1)[-1]
-        if case == "A":
+        if case == "E":
             lines = (
-                "# primary settings",
-                "TOKEN=alpha-17",
-                "# TOKEN=retired-04",
-                "TOKEN=beta-29",
-                "TOKEN=gamma-43",
-                "# TOKEN=retired-08",
+                "# app config",
+                "TIMEOUT=30",
+                "# TIMEOUT=10",
+                "TIMEOUT=45",
             )
             expected = {
-                "key": "TOKEN",
-                "value": "gamma-43",
-                "active_count": 3,
-                "ignored_count": 2,
+                "timeout": 45,
             }
-            primary_key = "value"
-        elif case == "B":
+            primary_key = "timeout"
+        elif case == "M":
             lines = (
                 "POLICY=FIRST_ACTIVE",
                 "LIMIT=120",
@@ -211,7 +207,7 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
             )
             expected = {"policy": "FIRST_ACTIVE", "winner": 120, "active_count": 2}
             primary_key = "winner"
-        else:
+        elif case == "H":
             lines = (
                 "MODE=SAFE",
                 "SAFE_CODE=green-7",
@@ -220,6 +216,8 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
             )
             expected = {"mode": "SAFE", "code": "green-7", "rule": "SAFE_CODE"}
             primary_key = "code"
+        else:
+            raise ValueError(f"unknown policy_extract case: {case}")
         _write(root, rel, "\n".join(lines) + "\n")
         return Fixture(
             task_id=spec.task_id,
@@ -227,12 +225,22 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
             main_path=rel,
             main_content=str(expected[primary_key]),
             expected_json=expected,
+            primary_key=primary_key,
         )
 
     if suffix == "selective_aggregate":
         directory = spec.path_directory or "project/s15/select"
         case = spec.task_id.rsplit("-", 1)[-1]
-        if case == "A":
+        if case == "E":
+            selected = (f"{directory}/alpha.log", f"{directory}/beta.log")
+            excluded = (f"{directory}/notes.txt",)
+            payloads = {
+                selected[0]: "10\n20\n",
+                selected[1]: "5\n",
+                excluded[0]: "999\n",
+            }
+            expected_total = 35
+        elif case == "M":
             selected = (f"{directory}/app.log", f"{directory}/worker.log")
             excluded = (
                 f"{directory}/app.draft.log",
@@ -247,22 +255,7 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
                 excluded[2]: "7000\n",
             }
             expected_total = 42
-        elif case == "B":
-            selected = (
-                f"{directory}/part01.txt",
-                f"{directory}/part02.txt",
-                f"{directory}/part03.txt",
-            )
-            excluded = (f"{directory}/part01_old.txt", f"{directory}/notes.md")
-            payloads = {
-                selected[0]: "a\nb\nc\n",
-                selected[1]: "d\ne\nf\ng\n",
-                selected[2]: "h\ni\nj\nk\nl\n",
-                excluded[0]: "stale\nstale\n",
-                excluded[1]: "not selected\n",
-            }
-            expected_total = 12
-        else:
+        elif case == "H":
             selected = (f"{directory}/a.csv", f"{directory}/b.csv", f"{directory}/d.csv")
             excluded = (f"{directory}/tmp_a.csv", f"{directory}/notes.txt")
             payloads = {
@@ -273,6 +266,8 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
                 excluded[1]: "ignored\n",
             }
             expected_total = 36
+        else:
+            raise ValueError(f"unknown selective_aggregate case: {case}")
         for rel, text in payloads.items():
             _write(root, rel, text)
         return Fixture(
@@ -288,7 +283,17 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
     if suffix == "search_collect":
         directory = spec.path_directory or "project/s15/search"
         case = spec.task_id.rsplit("-", 1)[-1]
-        if case == "A":
+        archive: str | None
+        if case == "E":
+            marker = "NEEDLE-"
+            hits = (f"{directory}/hits.txt",)
+            payloads = {
+                hits[0]: "NEEDLE-11\nNEEDLE-13\n",
+                f"{directory}/other.txt": "no matching marker\n",
+            }
+            expected_ids = (11, 13)
+            archive = None
+        elif case == "M":
             marker = "NEEDLE-"
             hits = (f"{directory}/alpha.txt", f"{directory}/beta.txt")
             payloads = {
@@ -297,16 +302,9 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
                 f"{directory}/gamma.txt": "no matching marker\n",
             }
             expected_ids = (104, 108, 115)
-        elif case == "B":
-            marker = "FLAG-"
-            hits = (f"{directory}/north.txt", f"{directory}/south.txt")
-            payloads = {
-                hits[0]: "FLAG-21\nother text\n",
-                hits[1]: "FLAG-34\nFLAG-21\n",
-                f"{directory}/empty.txt": "clear\n",
-            }
-            expected_ids = (21, 34)
-        else:
+            archive = f"{directory}/archive/old.txt"
+            payloads[archive] = f"{marker}999\n{marker}1000\n"
+        elif case == "H":
             marker = "KEY-"
             hits = (f"{directory}/one.txt", f"{directory}/two.txt")
             payloads = {
@@ -315,8 +313,10 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
                 f"{directory}/three.txt": "prefix KEY-900 is not at line start\n",
             }
             expected_ids = (7, 12)
-        archive = f"{directory}/archive/old.txt"
-        payloads[archive] = f"{marker}999\n{marker}1000\n"
+            archive = f"{directory}/archive/old.txt"
+            payloads[archive] = f"{marker}999\n{marker}1000\n"
+        else:
+            raise ValueError(f"unknown search_collect case: {case}")
         for rel, text in payloads.items():
             _write(root, rel, text)
         return Fixture(
@@ -325,7 +325,7 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
             files=hits,
             expected_ids=expected_ids,
             expected_read_paths=hits,
-            decoy_paths=(archive,),
+            decoy_paths=(archive,) if archive else (),
         )
 
     if suffix == "edit_verify":
@@ -334,7 +334,7 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
         new_token = spec.edit_new_token or "FIX-S15"
         case = spec.task_id.rsplit("-", 1)[-1]
         old_token = f"OLD-S15{case}"
-        line_count = {"A": 60, "B": 90, "C": 140}[case]
+        line_count = {"E": 20, "M": 60, "H": 140}[case]
         lines = [f"row-{index:03d}: token-{index:03d}" for index in range(1, line_count + 1)]
         lines[target - 1] = f"row-{target:03d}: {old_token}"
         _write(root, rel, "\n".join(lines) + "\n")
@@ -352,7 +352,15 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
         directory = spec.path_directory or "project/s15/audit"
         case = spec.task_id.rsplit("-", 1)[-1]
         shards: dict[str, str]
-        if case == "A":
+        if case == "E":
+            shards = {
+                "shard01.txt": "ALPHA=a1;REV=1\nBETA=b1;REV=2\n",
+                "shard02.txt": "GAMMA=g1;REV=3\nBETA=b2;REV=4\n",
+            }
+            resolved = {"ALPHA": "a1", "BETA": "b2", "GAMMA": "g1"}
+            conflicts: list[str] = []
+            old_name = "shard01.txt"
+        elif case == "M":
             shards = {
                 "shard01.txt": "ALPHA=a1;REV=1\nBETA=b1;REV=4\nGAMMA=g1;REV=2\n",
                 "shard02.txt": "ALPHA=a2;REV=5\nBETA=b2;REV=4\nDELTA=d1;REV=3\n",
@@ -361,16 +369,7 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
             resolved = {"ALPHA": "a2", "GAMMA": "g2", "DELTA": "d1"}
             conflicts = ["BETA"]
             old_name = "shard01.txt"
-        elif case == "B":
-            shards = {
-                "shard01.txt": "OMEGA=o1;REV=2\nRHO=r1;REV=7\n",
-                "shard02.txt": "OMEGA=o2;REV=2\nRHO=r2;REV=8\n",
-                "shard03.txt": "SIGMA=s1;REV=1\nTAU=t1;REV=3\n",
-            }
-            resolved = {"RHO": "r2", "SIGMA": "s1", "TAU": "t1"}
-            conflicts = ["OMEGA"]
-            old_name = "shard02.txt"
-        else:
+        elif case == "H":
             shards = {
                 "shard01.txt": "ETA=e1;REV=1\nIOTA=i1;REV=5\nKAPPA=k1;REV=2\n",
                 "shard02.txt": "ETA=e2;REV=1\nIOTA=i2;REV=5\nLAMBDA=l1;REV=4\n",
@@ -387,6 +386,8 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
             }
             conflicts = ["ETA", "IOTA"]
             old_name = "shard03.txt"
+        else:
+            raise ValueError(f"unknown audit_reconcile case: {case}")
         sources = tuple(sorted(f"{directory}/{name}" for name in shards))
         for name, text in shards.items():
             _write(root, f"{directory}/{name}", text)
@@ -682,11 +683,9 @@ def judge(
 
     if suffix == "policy_extract":
         expected = fixture.expected_json or {}
-        primary_key = {
-            "A": "value",
-            "B": "winner",
-            "C": "code",
-        }[spec.task_id.rsplit("-", 1)[-1]]
+        primary_key = fixture.primary_key
+        if not primary_key:
+            raise ValueError(f"{spec.task_id} fixture is missing primary_key")
         checks["json_valid"] = isinstance(payload, dict)
         checks["exact_keys"] = isinstance(payload, dict) and set(payload) == set(expected)
         checks["value_correct"] = bool(
