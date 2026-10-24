@@ -46,6 +46,13 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from trace_utils import (  # noqa: E402
+    TraceRecorder,
+    TracingCompactor,
+    TracingProvider,
+    TracingRegistry,
+)
+
 from agent.core.compaction import (  # noqa: E402
     SUMMARY_PREFIX,
     CompactionConfig,
@@ -56,6 +63,7 @@ from agent.core.constraints import (  # noqa: E402
     CONSTRAINT_MARKER,
     DEFAULT_FILENAME,
     ConstraintStore,
+    extract_declarations,
 )
 from agent.core.llm import BaseProvider, OpenAICompatProvider  # noqa: E402
 from agent.core.loop import AgentLoop  # noqa: E402
@@ -124,6 +132,19 @@ PROBE_CODES = "列出你被要求遵守的全部约束代号，输出 JSON 数�
 REPORT_FIELD = "constraint_codes"
 SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
 DEFAULT_OUT = Path("docs/evidence/constraint_retention_runs.jsonl")
+DEFAULT_TRACE_DIR = Path("private/traces/constraint_experiment")
+
+CHECK_STEP_LABELS = {
+    "json_valid": "probe_json",
+    "snake_case_keys": "probe_json",
+    "no_code_fence": "probe_repeat",
+}
+
+CHECK_RULE_TEXT = {
+    "json_valid": "输出必须是合法 JSON",
+    "snake_case_keys": "JSON 的键名必须使用 snake_case",
+    "no_code_fence": "输出中不得出现 markdown 代码围栏",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +278,31 @@ def count_recalled(reply: str, constraints: Sequence[tuple[str, str]]) -> int:
     return sum(1 for code, _ in constraints if code in reply)
 
 
+def constraint_ids_for_check(check: str, constraints: Sequence[tuple[str, str]]) -> list[str]:
+    rule = CHECK_RULE_TEXT.get(check)
+    if rule is None:
+        return []
+    return [code for code, content in constraints if content == rule]
+
+
+def build_evidence(
+    checks: Mapping[str, bool], constraints: Sequence[tuple[str, str]]
+) -> list[dict[str, Any]]:
+    """把失败检查映射到探针步骤与约束 id，供离线归因直接引用。"""
+    evidence: list[dict[str, Any]] = []
+    for check, ok in checks.items():
+        if ok or check not in CHECK_STEP_LABELS:
+            continue
+        evidence.append(
+            {
+                "check": check,
+                "step_label": CHECK_STEP_LABELS[check],
+                "constraint_ids": constraint_ids_for_check(check, constraints),
+            }
+        )
+    return evidence
+
+
 # ---------- 单次实验 ----------
 
 
@@ -276,25 +322,75 @@ async def run_once(
     provider: BaseProvider,
     max_turns: int,
     profile: Profile,
+    rollout_index: int = 0,
+    trace_dir: Path | str | None = DEFAULT_TRACE_DIR,
+    sampling_config: Mapping[str, Any] | None = None,
+    sample_set: str | None = None,
 ) -> dict[str, Any]:
     rng = random.Random(seed)
     constraints = build_constraints(rng, profile.constraint_count)
     parts = part_names(profile.filler_turns)
+    steps = build_steps(constraints, parts)
     root = Path(tempfile.mkdtemp(prefix=f"constraint-{group}-{run_id:02d}-"))
     started = time.perf_counter()
+    recorder: TraceRecorder | None = None
+    trace_path: Path | None = None
     try:
         build_workspace(root, rng, parts)
+        effective_sampling = dict(
+            sampling_config
+            if sampling_config is not None
+            else getattr(provider, "sampling_config", {"is_default": True})
+        )
+        if trace_dir is not None:
+            trace_path = (
+                Path(trace_dir)
+                / profile.name
+                / group
+                / f"{profile.name}_run{run_id:02d}_rollout{rollout_index:02d}.jsonl"
+            )
+            recorder = TraceRecorder(
+                trace_path,
+                metadata={
+                    "experiment": "constraint_experiment",
+                    "sample_set": sample_set
+                    or ("main" if group == GROUP_ON else "negative_control"),
+                    "task_id": profile.name,
+                    "run_id": run_id,
+                    "group": group,
+                    "profile": profile.name,
+                    "seed": seed,
+                    "fixture_seed": seed,
+                    "rollout_index": rollout_index,
+                    "max_turns": max_turns,
+                    "constraints_total": len(constraints),
+                    "step_labels": [step.kind for step in steps],
+                },
+                workspace=root,
+                constraints=constraints,
+                sampling_config=effective_sampling,
+            )
+
         store = ConstraintStore(root / STATE_DIR / DEFAULT_FILENAME) if group == GROUP_ON else None
         if store is not None:
             store.load()
-        compactor = Compactor(
+        traced_provider: Any = (
+            TracingProvider(provider, recorder) if recorder is not None else provider
+        )
+        inner_compactor = Compactor(
             CompactionConfig(context_window=CONTEXT_WINDOW),
-            summarize=_summarizer(provider),
+            summarize=_summarizer(traced_provider),
             constraints=store,
         )
+        compactor: Any = (
+            TracingCompactor(inner_compactor, recorder) if recorder is not None else inner_compactor
+        )
+        registry: Any = build_default_registry(root)
+        if recorder is not None:
+            registry = TracingRegistry(registry, recorder)
         loop = AgentLoop(
-            provider,
-            build_default_registry(root),
+            traced_provider,
+            registry,
             max_turns=max_turns,
             compactor=compactor,
         )
@@ -302,8 +398,11 @@ async def run_once(
         history: list[dict[str, Any]] = []
         snapshot: list[dict[str, Any]] = []
         replies: dict[str, str] = {}
+        declared_ids: set[str] = set()
         calls = 0
-        for step in build_steps(constraints, parts):
+        for step_index, step in enumerate(steps, start=1):
+            if recorder is not None:
+                recorder.set_step(step_index, step.kind, declared_ids=sorted(declared_ids))
             result = await loop.run(step.text, history=history)
             history = [dict(item) for item in result.messages]
             calls += result.turns
@@ -311,21 +410,50 @@ async def run_once(
                 snapshot = [dict(item) for item in history]
             else:
                 replies[step.kind] = result.content
+            if step.kind == "declare":
+                declared_ids.update(code for code, _ in extract_declarations(step.text))
+            if recorder is not None:
+                recorder.end_step()
 
         checks = judge(replies.get("probe_json", ""), replies.get("probe_repeat", ""))
         preserved, verbatim = count_preserved(snapshot, constraints)
         counts = compactor.stats.counts
-        # 最终上下文里还剩几条摘要消息。修掉 compose_summary 的叠加后应当恒为 1。
         summary_messages = sum(
             1
             for item in history
             if item.get("role") == "system" and SUMMARY_PREFIX in str(item.get("content") or "")
         )
+        duration = round(time.perf_counter() - started, 1)
+        trace_display = ""
+        if trace_path is not None:
+            try:
+                trace_display = trace_path.resolve().relative_to(Path.cwd().resolve()).as_posix()
+            except ValueError:
+                trace_display = trace_path.as_posix()
+        if recorder is not None:
+            recorder.end_run(
+                checks=checks,
+                evidence=build_evidence(checks, constraints),
+                step_replies=replies,
+                duration_s=duration,
+                extras={
+                    "preserved": preserved,
+                    "preserved_verbatim": verbatim,
+                    "replenished": compactor.stats.replenished,
+                    "codes_recalled": count_recalled(replies.get("probe_codes", ""), constraints),
+                    "tiers_triggered": counts,
+                    "summary_messages": summary_messages,
+                    "llm_calls": calls,
+                },
+            )
         return {
             "run_id": run_id,
+            "rollout_index": rollout_index,
             "group": group,
             "profile": profile.name,
             "seed": seed,
+            "sampling_config": effective_sampling,
+            "trace_path": trace_display,
             "constraints_total": len(constraints),
             "preserved": preserved,
             "preserved_verbatim": verbatim,
@@ -338,9 +466,11 @@ async def run_once(
             "summary_calls": counts.get("tier4", 0),
             "summary_messages": summary_messages,
             "llm_calls": calls,
-            "duration_s": round(time.perf_counter() - started, 1),
+            "duration_s": duration,
         }
     finally:
+        if recorder is not None:
+            recorder.close()
         shutil.rmtree(root, ignore_errors=True)
 
 
@@ -443,39 +573,76 @@ def self_test() -> int:
     return 0
 
 
+def parse_run_ids(raw: str, runs: int) -> list[int]:
+    if not raw.strip():
+        return list(range(1, runs + 1))
+    result: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            run_id = int(part)
+        except ValueError as exc:
+            raise ValueError(f"非法 run id：{part}") from exc
+        if run_id < 1:
+            raise ValueError(f"run id 必须 >= 1：{run_id}")
+        if run_id not in result:
+            result.append(run_id)
+    if not result:
+        raise ValueError("--run-ids 不能为空")
+    return result
+
+
 async def main_async(args: argparse.Namespace) -> int:
-    if args.runs < 1:
-        print("--runs 必须大于等于 1", file=sys.stderr)
+    if args.runs < 1 or args.rollouts < 1:
+        print("--runs 与 --rollouts 必须大于等于 1", file=sys.stderr)
+        return 2
+    try:
+        run_ids = parse_run_ids(args.run_ids, args.runs)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
         return 2
 
     env_path = find_env_file(Path.cwd())
     if env_path is not None:
         load_env_file(env_path)
-    provider = OpenAICompatProvider.from_env()
+    provider = OpenAICompatProvider.from_env(
+        temperature=args.sampling_temperature,
+        top_p=args.sampling_top_p,
+        seed=args.sampling_seed,
+    )
 
     profile = PROFILES[args.profile]
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 续跑：种子由 (profile, run_id) 决定，同一对必然复现同一次会话，
-    # 所以「已落盘的 (group, run_id)」就是可以安全跳过的集合。
+    # 续跑键必须带上 rollout；旧记录没有该字段时按 0 处理。
     prior = load_records(out_path, profile.name) if args.resume else []
-    done = {(str(item.get("group")), int(item.get("run_id", 0))) for item in prior}
+    done = {
+        (
+            str(item.get("group")),
+            int(item.get("run_id", 0)),
+            int(item.get("rollout_index", 0)),
+        )
+        for item in prior
+    }
     if done:
-        print(f"[resume] 已有 {len(done)} 次记录，跳过：{sorted(done)}", flush=True)
+        print(f"[resume] 已有 {len(done)} 次记录，跳过这些组合", flush=True)
 
     jobs = [
-        (run_id, group, args.seed + run_id * 1000 + offset)
+        (run_id, group, args.seed + run_id * 1000 + offset, rollout_index)
         for offset, group in enumerate(args.groups)
-        for run_id in range(1, args.runs + 1)
-        if (group, run_id) not in done
+        for run_id in run_ids
+        for rollout_index in range(args.rollouts)
+        if (group, run_id, rollout_index) not in done
     ]
     if not jobs:
         print("[resume] 没有待跑的会话，直接汇总。", flush=True)
     semaphore = asyncio.Semaphore(args.concurrency)
     records: list[dict[str, Any]] = list(prior)
 
-    async def worker(run_id: int, group: str, seed: int) -> dict[str, Any]:
+    async def worker(run_id: int, group: str, seed: int, rollout_index: int) -> dict[str, Any]:
         async with semaphore:
             return await run_once(
                 run_id=run_id,
@@ -484,6 +651,9 @@ async def main_async(args: argparse.Namespace) -> int:
                 provider=provider,
                 max_turns=args.max_turns,
                 profile=profile,
+                rollout_index=rollout_index,
+                trace_dir=args.trace_dir,
+                sampling_config=provider.sampling_config,
             )
 
     try:
@@ -499,7 +669,10 @@ async def main_async(args: argparse.Namespace) -> int:
     print("\n=== 汇总 ===")
     table = aggregate(sorted(records, key=lambda item: (item["group"], item["run_id"])))
     print(table)
-    print(f"\n逐次记录：{out_path}")
+    print(f"采样配置：{provider.sampling_config}")
+    print(f"逐次记录：{out_path}")
+    if args.trace_dir:
+        print(f"trace 目录：{args.trace_dir}")
     return 0
 
 
@@ -507,12 +680,31 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="约束保留对比实验")
     parser.add_argument("--runs", type=int, default=10, help="每组跑几次，默认 %(default)s")
     parser.add_argument(
+        "--run-ids",
+        default="",
+        help="只跑指定 run id，逗号分隔，例如 2,10；传了就忽略 --runs 的范围",
+    )
+    parser.add_argument(
+        "--rollouts",
+        type=int,
+        default=1,
+        help="每个 run 用同一采样配置重复几次，默认 %(default)s",
+    )
+    parser.add_argument(
         "--groups",
         choices=("both", *GROUPS),
         default="both",
         help="跑哪些组，默认 both",
     )
-    parser.add_argument("--seed", type=int, default=20260914, help="随机种子基数")
+    parser.add_argument("--seed", type=int, default=20260914, help="夹具随机种子基数")
+    parser.add_argument(
+        "--sampling-temperature",
+        type=float,
+        default=None,
+        help="LLM temperature；不传则保持旧 payload（不发送该字段）",
+    )
+    parser.add_argument("--sampling-top-p", type=float, default=None, help="LLM top_p")
+    parser.add_argument("--sampling-seed", type=int, default=None, help="LLM seed")
     parser.add_argument(
         "--profile",
         choices=tuple(PROFILES),
@@ -523,9 +715,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-turns", type=int, default=4, help="单次任务的 LLM 轮数上限")
     parser.add_argument("--out", default=str(DEFAULT_OUT), help="逐次记录写入的 JSONL 路径")
     parser.add_argument(
+        "--trace-dir",
+        default=str(DEFAULT_TRACE_DIR),
+        help="每个 rollout 的 trace 目录；默认 %(default)s",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
-        help="跳过 --out 里已经落盘的 (group, run_id)，只补跑缺的那些；汇总含旧记录",
+        help="跳过 --out 里已经落盘的 (group, run_id, rollout)，只补跑缺的那些",
     )
     parser.add_argument("--self-test", action="store_true", help="只跑判定逻辑自检，不联网")
     return parser

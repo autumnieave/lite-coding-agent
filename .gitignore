@@ -38,3 +38,17 @@ Thumbs.db
 
 # 本地私有材料（不进仓库，只有本机有）
 private/
+
+# 训练 / 评测大文件：数据、adapter、trace、Kaggle 拉取与临时打包
+*.jsonl
+!docs/evidence/*.jsonl
+!docs/evidence/**/*.jsonl
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.whl
+traces/
+kaggle_pull_*/
+tmp_*/
+**/wheel/

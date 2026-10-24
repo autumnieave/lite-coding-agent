@@ -35,11 +35,15 @@ class ToolError(Exception):
         expected_format: str | None = None,
         available_values: Sequence[str] | None = None,
         last_error: str | None = None,
+        error_kind: str | None = None,
+        validation_stage: str | None = None,
     ) -> None:
         super().__init__(message)
         self.expected_format = expected_format
         self.available_values = list(available_values) if available_values else None
         self.last_error = last_error
+        self.error_kind = error_kind
+        self.validation_stage = validation_stage
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +59,10 @@ class ToolResult:
     expected_format: str | None = None
     available_values: tuple[str, ...] | None = None
     last_error: str | None = None
+    error_kind: str | None = None
+    """结构化的错误分类，例如 `path_escape`；成功或旧调用方不填时为 None。"""
+    validation_stage: str | None = None
+    """错误发生在生成后执行前，还是执行中；默认 None 表示未分类。"""
 
     @classmethod
     def success(
@@ -64,6 +72,8 @@ class ToolResult:
         expected_format: str | None = None,
         available_values: Sequence[str] | None = None,
         last_error: str | None = None,
+        error_kind: str | None = None,
+        validation_stage: str | None = None,
     ) -> ToolResult:
         return cls(
             ok=True,
@@ -71,6 +81,8 @@ class ToolResult:
             expected_format=expected_format,
             available_values=tuple(available_values) if available_values else None,
             last_error=last_error,
+            error_kind=error_kind,
+            validation_stage=validation_stage,
         )
 
     @classmethod
@@ -81,6 +93,8 @@ class ToolResult:
         expected_format: str | None = None,
         available_values: Sequence[str] | None = None,
         last_error: str | None = None,
+        error_kind: str | None = None,
+        validation_stage: str | None = None,
     ) -> ToolResult:
         return cls(
             ok=False,
@@ -88,6 +102,8 @@ class ToolResult:
             expected_format=expected_format,
             available_values=tuple(available_values) if available_values else None,
             last_error=last_error,
+            error_kind=error_kind,
+            validation_stage=validation_stage,
         )
 
 
@@ -101,7 +117,11 @@ def resolve_path(root: Path, raw: str) -> Path:
     resolved = candidate.resolve()
     root_resolved = root.resolve()
     if resolved != root_resolved and root_resolved not in resolved.parents:
-        raise ToolError(f"路径越界，只能访问工作区内的文件：{raw}")
+        raise ToolError(
+            f"路径越界，只能访问工作区内的文件：{raw}",
+            error_kind="path_escape",
+            validation_stage="post_generation_pre_execution",
+        )
     return resolved
 
 
@@ -136,15 +156,27 @@ class Tool(ABC):
         try:
             payload = json.loads(raw_arguments) if raw_arguments and raw_arguments.strip() else {}
         except json.JSONDecodeError as exc:
-            return ToolResult.failure(f"参数不是合法 JSON：{exc}")
+            return ToolResult.failure(
+                f"参数不是合法 JSON：{exc}",
+                error_kind="json_decode",
+                validation_stage="post_generation_pre_execution",
+            )
 
         if not isinstance(payload, dict):
-            return ToolResult.failure("参数必须是 JSON 对象")
+            return ToolResult.failure(
+                "参数必须是 JSON 对象",
+                error_kind="invalid_argument_type",
+                validation_stage="post_generation_pre_execution",
+            )
 
         try:
             args = self.args_model.model_validate(payload)
         except ValidationError as exc:
-            return ToolResult.failure(f"参数校验失败：{_describe_validation_error(exc)}")
+            return ToolResult.failure(
+                f"参数校验失败：{_describe_validation_error(exc)}",
+                error_kind="pydantic_validation",
+                validation_stage="post_generation_pre_execution",
+            )
 
         try:
             return await self.execute(args)
@@ -154,9 +186,15 @@ class Tool(ABC):
                 expected_format=exc.expected_format,
                 available_values=exc.available_values,
                 last_error=exc.last_error,
+                error_kind=exc.error_kind or "tool_error",
+                validation_stage=exc.validation_stage or "execution",
             )
         except Exception as exc:  # noqa: BLE001 - 兜底，避免单个工具异常打断整个循环
-            return ToolResult.failure(f"工具执行异常：{type(exc).__name__}: {exc}")
+            return ToolResult.failure(
+                f"工具执行异常：{type(exc).__name__}: {exc}",
+                error_kind="internal_error",
+                validation_stage="execution",
+            )
 
     @abstractmethod
     async def execute(self, args: Any) -> ToolResult:

@@ -16,6 +16,7 @@
 | Day 7 结束 | 488 | 约 19s | 新增 `mcp_client` 17 / `mcp_cli` 10 / 约束拦截 10（其中 23 条会真的拉起子进程） |
 | 定稿（benchmark 之后） | 516 | 约 18s | 新增结构化错误提示 19 / 失败升级 9（L1 + L3） |
 | MCP 加固（接真实第三方 server） | 526 | 约 16s | 新增 `mcp_hardening` 10：协议版本 / `capabilities` / `isError` / 子进程环境隔离 / 非 UTF-8 解码 |
+| 阶段 A + 训练管线骨架 + 统一数据集 + 难度调参 + 小基座协议审计 + 1.5B/7B SFT | 732 passed / 1 skipped（+10 slow） | 约 27s | 新增 trace / 归因 / 受控冲突 / 方向 C / reward / constrained decoding / 统一数据集评估 / 五维难度阶梯 / 小模型 Kaggle 入口 / SFT held-out / 模板修复复跑与 adapter 校验 |
 
 耗时从 31.5s 降到约 6s 的原因见 ADR-009：超时用例原先要等满子进程的睡眠时长。Day 3 之后回升到约 11s，是新增的 66 个压缩用例本身的开销，不是回归。
 
@@ -38,7 +39,35 @@
   违反 0 次。见用例九。
 - **Benchmark 分组对照（C 类，各 12 次）**：`on` 内容判定 12/12、违反 0；`off` 6/12、违反 9
   （其中 3 次整段丢失）。两组的 Tier 4 触发次数与摘要消息数完全相同。见用例九（6）。
-- **工程事实**：526 个单测、`ruff` + CI 全绿；MCP 有端到端记录——仓库自带最小 server 走通握手与执行层约束拦截，官方 `server-filesystem`（14 个工具）走通真实第三方 server（用例八）。
+- **工程事实**：710 个非 slow 单测通过、1 个 skipped（另有 10 个 slow deselected），`ruff` + CI 全绿；MCP 有端到端记录——仓库自带最小 server 走通握手与执行层约束拦截，官方 `server-filesystem`（14 个工具）走通真实第三方 server（用例八）。
+- **阶段 A 稳定性**：stress on run 2/10 各 10 次 rollout，4 条违反检查全部 `intermittent`
+  （stable=0）；负对照 C1/C2/C3 off 的 16 条检查也全部 `intermittent`。详见
+  `docs/evidence/阶段A_10rollout结论.md`。
+- **统一数据集 pilot**：7 dev + 7 test 各 70 次真实 rollout，stable=0；最高非零项
+  `tools_allowed` 4/10、`json_valid` 4/10、`source_count_correct` 3/10。当前 test 是
+  pilot，不是严格一次性 held-out；四组最终对比前必须重新冻结新 test。
+- **dev-only 难度调参（deepseek-flash）**：11 个任务 × 10 次 rollout，覆盖约束数量、
+  上下文长度、工具参数、冲突、检查深度五个维度；hard 组最高 4/10，五维 stable 均为 0。
+  相同采样配置两轮对比，560 个 rollout × 检查项观测翻转 20 个（3.57%），没有任何检查项
+  跨过 6/10。明细见 `docs/evidence/任务难度调参.md`。
+- **小基座 v7 + CTX 重跑（Qwen2.5-1.5B-Instruct）**：v7 的 90 条有效 rollout 加上 v8 CTX
+  重跑的 20 条有效 rollout，合计 **110 条有效 rollout、0 个 400 error**。v7 原有 20 次
+  4575 > 4096 token error 是配置错误，不是模型违反；已通过 fixture 缩至 25 行/文件 +
+  `max_model_len=8192` 修复，CTX 重跑 20/20 有效。合并后出现 **20 个 stable 违反检查项**
+  （全部 10/10，0 个 intermittent）：`constraint_count` 10 项、`context_length` 2 项、
+  `tool_parameters` 3 项、`conflict` 5 项，`check_depth` 0 项；分布在 7 个任务上。行为层
+  证据包括 `CTX-HARD` 只读 2/10 文件、`TOOL-HARD` 的 `total_lines=18`（期望 16）、
+  `CONFLICT-WEAK` 未写小写文件名、`CONFLICT-STRONG` 未声明互斥冲突而直接写文件。明细见
+  `docs/evidence/小基座v7结果.md`。
+- **final-test-v1 baseline（Qwen2.5-1.5B-Instruct）**：11 个任务 × 10 次 = 110 条 rollout、
+  0 error、56 个检查项、26 个 stable（0 个 intermittent）、任务成功 2/11；检查级通过率
+  300/560 = 53.6%，工具调用 110/150 成功，轨迹完整 110/110。数字门禁为 9/11 个任务出现
+  stable，但 `U-FT10-BASE` / `U-FT11-HARD` 的冻结 prompt 仍引用 dev 路径
+  `project/notes/part02.txt` / 第 37 行，test fixture 实际生成
+  `project/notes/part07.txt` / 第 53 行；20 次 rollout 的 40 次 `read_file` 全部读取
+  `part02.txt` 并返回文件不存在，6 个 stable 检查项由任务定义缺陷造成，不是模型行为。
+  剔除后仍有 **20 个 valid stable、7/11 个任务触发门禁**，但 `final-test-v1` 不能直接用于
+  四组最终对比。明细见 `docs/evidence/final_test_baseline.md`。
 
 ### 方向性结论（方向可信，百分比不可外推）
 
@@ -49,12 +78,42 @@
   每个任务只有 3 次，样本量只够支撑方向判断。
 - **约束机制在行为层的增益**：C 类 on/off 内容判定 12/12 vs 6/12 方向明确，但每组 12 次、
   只有 4 个任务，不支持「提升 X%」这种表述。
+- **方向 C 自检的收益**：手工自检把 `json_valid` / `snake_case_keys` 从基线 `4/40`
+  降到 `0/40`，满足预注册门槛；但 Fisher `p=0.1156`（检查级）/ `0.4872`（rollout 级，
+  真实计数 `2/20` vs `0/20`），只能写“描述性有信号、样本量不足以证明收益”，不工程化。
 - **长上下文召回**：C3 六次里 `on` 档三次全部正确、`off` 档两次丢了约束，另有 1 次是判定偏松
   （模型拒绝作答时引用了代号仍判通过，见用例九（6））。
 
 ### 已知限制
 
 完整清单与每条「为什么接受 / 后续怎么改」见文末「已知限制与后续迭代项」。
+
+## 阶段 A：违反归因（10 次 rollout / run）
+
+口径与结果写在独立文档，避免和早期用例混在一起：
+
+| 文档 | 内容 |
+| --- | --- |
+| `docs/evidence/阶段A_10rollout结论.md` | 主样本/负对照命中率、翻转、metadata、阶段判断 |
+| `docs/evidence/违反根因分布表.csv` | 20 条违反检查的根因行，含 stability 与 rollout_hits |
+| `docs/evidence/检查项命中率表.csv` | 每个 run × 检查项的命中率 |
+| `docs/evidence/翻转率报告.md` | 逐 run 翻转与稳定性汇总 |
+| `docs/evidence/冲突专项.md` | run 2 event=44 互斥约束、模型原话、受控冲突实验 |
+| `docs/evidence/方向C手工验证.md` | 20 次手工自检、预注册门槛、Fisher 检验 |
+| `docs/evidence/方向C扩采样门槛.md` | 跑之前锁定的门槛、指标与统计口径 |
+| `docs/evidence/方向C命中率对比.csv` | 基线/手工组逐 run × 检查项命中率 |
+| `docs/evidence/训练管线验证.md` | reward 对齐、train-v2 扩采样分布、1.5B/7B QLoRA 真实结果、模板修复复跑、adapter 校验与 BASE/HARD held-out |
+| `docs/evidence/trace_schema.md` | 每轮 trace 字段、约束可见性、脱敏与 `reply_head` 禁用原因 |
+| `docs/evidence/统一数据集方案.md` | 五维覆盖、dev/test pilot、四组对比与预注册口径 |
+| `docs/evidence/统一数据集baseline.md` | 7+7 × 10 rollout、stable/intermittent 明细与 pilot 限制 |
+| `docs/evidence/final_test_baseline.md` | `final-test-v1` 的 110 条 baseline、26 个 stable、U-FT10/11 有效性复核与四组启动判断 |
+| `docs/evidence/benchmark修正回归.md` | B3/B4/C3/C4 修正后 48 次真实回归与 on 档 trace 覆盖 |
+| `docs/evidence/constrained_decoding对比.md` | Kaggle T4 v1/v2 ERROR、v3 取消、v4 权重加载 900 秒超时；0 条结果，未完成前不写命中率 |
+| `docs/evidence/Kaggle队列审计.md` | 账号 kernel 状态、GPU 名额占用确认、小基座排队与不重推 constrained 的记录 |
+
+核心数字：主样本 4 条违反检查、负对照 16 条，全部 `intermittent`，`stable=0`；
+方向 C 手工组检查级 `0/40` vs 基线 `4/40`（rollout 级 `0/20` vs `2/20`），满足门槛但 Fisher `p>0.05`；
+12×3 benchmark 的 5 次步数超预算失败没有进入违反根因表。
 
 ## 关键验证用例
 
@@ -313,12 +372,12 @@ $ lite-agent chat "用 echo 工具说 hello" --mcp-server "python examples/echo_
 前两段用的是仓库自带的最小 server——它只会乖乖按预期回话。换成官方 `@modelcontextprotocol/server-filesystem` 之后，三处只有真实 server 才逼得出来的问题暴露出来并修掉。沙箱工作区随仓库一起放着（`docs/evidence/mcp_e2e/`，只有 `hello.txt` 和 `notes.md`），照抄即可复跑：
 
 ```
-$ cd D:\agent\手搓coding_agent\lite-coding-agent
-$ lite-agent chat "读取 D:\agent\手搓coding_agent\lite-coding-agent\docs\evidence\mcp_e2e\hello.txt 并原样输出" --mcp-server "fs=cmd /c npx -y @modelcontextprotocol/server-filesystem D:\agent\手搓coding_agent\lite-coding-agent\docs\evidence\mcp_e2e" --verbose
+$ cd <repo>
+$ lite-agent chat "读取 <repo>\docs\evidence\mcp_e2e\hello.txt 并原样输出" --mcp-server "fs=cmd /c npx -y @modelcontextprotocol/server-filesystem <repo>\docs\evidence\mcp_e2e" --verbose
 [verbose] 提示：MCP server「fs」声明了 tools.listChanged，本实现不处理动态变更，工具表按首次发现固定
 [verbose] MCP server「fs」握手完成：secure-filesystem-server 0.2.0（协议 2024-11-05）
 [verbose] MCP server「fs」已连接，发现 14 个工具
-[verbose] [第 1 轮] 调用 mcp__fs__read_file({"path": "D:\\agent\\手搓coding_agent\\lite-coding-agent\\docs\\evidence\\mcp_e2e\\hello.txt"})
+[verbose] [第 1 轮] 调用 mcp__fs__read_file({"path": "<repo>\\docs\\evidence\\mcp_e2e\\hello.txt"})
 [verbose] [第 1 轮] 结果 mcp__fs__read_file -> 成功：MCPE2E-20260923
 ```
 
@@ -459,5 +518,29 @@ C 类补跑了 `off` 档（关闭约束存储，压缩照常发生），每组 1
   或改用压力档（40 条约束）提高丢失概率。
 - **C3 的召回判定偏松**：`token_recalled` 只看代号是否出现在回复里，模型在拒绝作答时引用该代号也算命中
   （用例九（6））。**后续怎么改**：判定加一条「回复必须基本等同于该代号」的长度/结构约束。
+- **阶段 A 主样本 stable=0**：stress on run 2/10 各 10 次 rollout，4 条违反检查全是
+  `intermittent`；负对照 16 条检查也全是 `intermittent`。**为什么接受**：这正是门禁要回答的问题——
+  当前样本不足以支撑阶段 B/C 工程化，负结果必须保留。**后续怎么改**：扩大任务/约束模板，
+  让 stable 违反有机会出现，而不是调 temperature/seed 去凑 stable。
+- **训练侧是小规模能力边界验证，不是普遍增益**：`Qwen2.5-1.5B-Instruct` 完成 1 次
+  QLoRA SFT（train 89 / val 30、22 optimizer step），held-out task_success
+  `10/60 → 20/60`，但 BASE 持平、HARD 仅 `TOOL-HARD` 提升，`A-C1-HARD` 新增 10/10
+  步数循环。7B v5 在同类数据上严重退化（baseline `40/60`、SFT `20/60`，BASE
+  `20/30 → 0/30`）；诊断发现训练渲染未传 tools schema，同一轨迹训练 307 token、推理
+  1567 token。v9 只修模板并保留 3072 序列长度后恢复为 `60/60`，BASE/HARD 均 `30/30`，
+  valid stable `4 → 0`。这支持“模板一致性是数据管线关键门禁”，不支持“训练普遍有效”。
+  GRPO 未执行。
+  constrained decoding v1/v2 因路径/依赖 `ERROR`，v3 被取消，v4 改为 fp16 + limit=5 +
+  max_new_tokens=256 + 900 秒超时后仍卡在 `Loading weights: 0%`，0 条可用指标。
+  held-out 工具结果成功率已按 trace 实测为 `90/90` vs `250/250`，但调用总数从 90 涨到
+  250，不能当效率提升。**为什么接受**：本地 MX250 不作为训练环境，且不伪造结果。
+  **后续怎么改**：保持模板一致性回归测试；GRPO 前先给 reward 加步数/重复调用惩罚；
+  constrained decoding 重试前先预加载/缓存模型并放宽加载超时。
+- **final-test-v1 的 stable 总数含 6 个任务定义缺陷**：baseline 的 26 个 stable 中，
+  `U-FT10/11` 各 2/4 个检查项由 prompt 指向 dev 的 `part02.txt`、而 fixture 生成
+  `part07.txt` 导致；20 次 rollout 全部读错文件，40 次工具错误。**为什么接受**：v1 已冻结，
+  不在看到结果后静默改 manifest；先保留原始证据并显式标注。**后续怎么改**：优先作废升
+  `final-test-v2` 并重跑 baseline；若保留 v1，则四组统计必须排除这两个任务，test 降级为
+  9 任务，不能把 26 个 stable 直接写进结论。
 - **约束只增不减，没有撤销 / 停用接口**：`ConstraintStore` 只有 `add` / `set` / `absorb` / 查询，没有 `remove` / `enabled` / `expires_at`；用户中途改口径时，同 id 在 `absorb` 路径下**静默跳过、先到先得**（`core/constraints.py:250-251`，该行为在 `:242-243` 有说明：扫的是自由文本，重申同一条约束是常态），且**没有冲突日志**。约束一旦写入就每轮全量进 system prompt（ADR-016），清单随会话单调增长。**为什么接受**：本轮目标是「不丢」，先保证只加不减这条路径可校验（压缩前后比对 id 集合，ADR-004）；改口径时该覆盖还是该新增，要先定语义再动手。**后续怎么改**：加 `enabled` 标志位而不是物理删除（保留 id 供校验跳过），`absorb` 命中同 id 时记一条冲突日志并按 `priority` 决定是否覆盖，CLI 加 `constraints disable <id>` 入口。
 - **checkpoint 保证「不写坏历史」，不保证「不丢数据」**：`session.jsonl` 是 append-only 追加写（ADR-015），`memory/session.py:166-172` 的 `_write()` 只做 `open("a")` 写一行，**`src/` 内无 `fsync`**（`flush` 只出现在 CLI 打印）；写侧**没有幂等键**（无 turn id），且每轮先 `append_messages` 再 `append_state`（`cli/main.py:205-215`），最坏情况是「消息已写、state 未写」→ 重启后 `turns` / `tokens` 回退一轮、该轮被重做并在日志里留下重复；也**没有文件锁**，两个进程同写一个 session 无保证。**为什么接受**：ADR-015 的取舍是拿持久性换 O(1) 追加——防进程被杀（坏行解析时跳过 `:185-188`、`trim_incomplete_tail()` 裁掉未配对尾部 `:50-77`），不防掉电；已落盘的历史不会被写坏。**后续怎么改**：`append_message` 加 turn id 做写侧重放保护（收益最高）；跨进程场景加文件锁或改 SQLite；`flush` + `os.fsync` 只在项目定位从「本机 CLI」变成「不能丢数据」时再加（代价是每轮一次落盘）。

@@ -78,6 +78,10 @@ harness 内部仍有 `Step(label, text)`，`label ∈ setup/declare/fill/probe`�
 2. experiment 不引入 `task_id` / `category`；benchmark 不引入约束专用的运行期开关字段。
 3. 两边各自读自己的 JSONL，缺字段按默认值处理，互不要求对方升级。
 
+**阶段 A 归因边界**：benchmark 的 `within_steps=false` 只表示步数超预算，不是约束违反；
+`scripts/attribute_violations.py` 永远排除它。12 任务 × 3 次里的 5 次步数失败只作为
+benchmark 行为指标单独记录，不写进 `违反根因分布表.csv`。
+
 ## 5. 待确认项（4）
 
 | 编号 | 问题 | 现状 / 证据 | 建议默认值 | 影响面 |
@@ -97,8 +101,9 @@ benchmark 只测「能恢复」这一侧。
    `fullmatch` 判定，会把「内容正确 + 多一句收尾话」误判成不合规（A2、B4 都踩到）。
    C 类保持严格——C1 的「必须是合法 JSON」、C2 的「不得出现代码围栏」本身就是被考察的约束，
    放宽会把该测出来的违规洗掉。
-2. **B4 的步数上限 4 → 6**，与 B1–B3 对齐。效率已经由 `steps` + `within_steps` 度量，
-   不该因为一条任务要试探 shell 就比同类更苛刻。
+2. **B4 的步数上限 4 → 6 → 9**。最终按 Windows 下历史正确结果 8–9 步校准：
+   该任务的目的不是逼模型用最短 shell，而是验证能在合理预算内走完；最小路径仍是 1 次
+   `bash`，但 `wc` 不存在时允许 PowerShell 回退。效率仍由 `steps` + `within_steps` 单独度量。
 3. **「按 group」汇总只统计 `constraints_total > 0` 的行**（即 C 类）。A/B 不声明约束，
    混进去会把保留率的分母与语义一起搅乱。
 4. **`observations` 增加 `escalated_tools`**：L3 钩子只收到一段文本，工具名从文本里解，
@@ -117,6 +122,15 @@ benchmark 只测「能恢复」这一侧。
 9. **正确性与效率拆成两列**：`内容正确` = 除 `within_steps` 外的判定是否全真，`步数达标` 只报
    `within_steps`（没有步数上限的任务显示 `-`）。`task_success = 两者都真`，混在一格会把
    「做对了但绕路」记成「做错」。`--self-test` 覆盖了「内容对但超步数」与「无步数上限」两种行。
+10. **审计后的独立修正**：C3 改为精确回答 token（拒绝解释中夹带 token 的误判）；
+    C4 明确声明「用户文件名含大写时改为小写并说明」，judge 精确检查目标文件和内容；
+    B3 恢复路径从软观测升级为硬检查，要求 `write_file` 失败后 `edit_file` 成功。
+    这些修正只改判定口径，不调难度、不放宽约束。
+
+11. **修正后回归基线**：B3/B4/C3/C4 各自独立提交后，以固定采样配置重跑
+    `--group both --runs 3`。48 次运行中内容正确 41/48、任务成功 37/48，步数失败
+    6 次均单独统计；on 档 36/36 有完整 trace。详细逐任务结果见
+    `docs/evidence/benchmark修正回归.md`。这组结果只作为历史回归，不进入训练集。
 
 ## 6. 任务清单
 
@@ -150,7 +164,7 @@ benchmark 只测「能恢复」这一侧。
 | B1 | edit_exec | 6 | 8 | on |
 | B2 | edit_exec | 6 | 8 | on |
 | B3 | edit_exec | 6 | 8 | on |
-| B4 | edit_exec | 6 | 8 | on |
+| B4 | edit_exec | 9 | 8 | on |
 | C1 | long_context | —（无步数上限） | 6 | on/off |
 | C2 | long_context | —（无步数上限） | 6 | on/off |
 | C3 | long_context | —（无步数上限） | 6 | on/off |

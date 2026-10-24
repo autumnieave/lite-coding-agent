@@ -1,0 +1,43 @@
+{
+  "model": "Qwen/Qwen2.5-1.5B-Instruct",
+  "tools_offered": [
+    "bash",
+    "edit_file",
+    "grep",
+    "list_dir",
+    "read_file",
+    "write_file"
+  ],
+  "chat_template": {
+    "available": true,
+    "length": 2507,
+    "sha256": "cd8e9439f0570856fd70470bf8889ebd8b5d1107207f67a5efb46e342330527f",
+    "has_tools_branch": true,
+    "has_tool_call_tag": true,
+    "has_tool_response_tag": true,
+    "has_tool_calls_field": true
+  },
+  "auto": {
+    "tool_choice": "auto",
+    "response_id": "chatcmpl-bfe12a6535f2923c",
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "finish_reason": "tool_calls",
+    "content": "",
+    "content_has_fenced_json": false,
+    "tool_calls": [
+      {
+        "name": "read_file",
+        "arguments": "{\"path\": \"project/tuning/config_c1.ini\"}"
+      }
+    ],
+    "protocol_error": null
+  },
+  "required_control": null,
+  "duration_s": 147.7,
+  "vllm_version": "0.12.0",
+  "torch_backend": "cu129",
+  "gpu": {
+    "available": true,
+    "query": "Tesla T4, 15360 MiB, 12985 MiB, 580.178.04\nTesla T4, 15360 MiB, 3 MiB, 580.178.04"
+  }
+}

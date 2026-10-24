@@ -1,0 +1,11 @@
+# Kaggle T4 only. These packages are optional and must not be added to core dependencies.
+torch>=2.1
+transformers>=4.44,<4.50
+datasets>=2.20
+accelerate>=0.33
+peft>=0.10
+trl>=0.9,<0.13
+bitsandbytes>=0.43
+outlines>=0.1.11
+jsonschema>=4.22
+liger-kernel==0.5.10

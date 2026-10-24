@@ -12,7 +12,7 @@ import inspect
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -51,6 +51,7 @@ class LLMResponse:
 
     content: str
     tool_calls: tuple[ToolCall, ...] = ()
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def has_tool_calls(self) -> bool:
@@ -162,15 +163,38 @@ class OpenAICompatProvider(BaseProvider):
         base_url: str | None = None,
         timeout: float = 60.0,
         client: AsyncOpenAI | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        seed: int | None = None,
     ) -> None:
         if not api_key or not api_key.strip():
             raise LLMConfigError(f"{ENV_API_KEY} 为空")
         self.model = model
         self.base_url = base_url
+        self.temperature = temperature
+        self.top_p = top_p
+        self.seed = seed
         self._client = client or AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
 
+    @property
+    def sampling_config(self) -> dict[str, Any]:
+        """本次 Provider 使用的采样参数。默认全为 None 时 payload 与旧版一致。"""
+        return {
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "seed": self.seed,
+            "is_default": self.temperature is None and self.top_p is None and self.seed is None,
+        }
+
     @classmethod
-    def from_env(cls, environ: Mapping[str, str] | None = None) -> OpenAICompatProvider:
+    def from_env(
+        cls,
+        environ: Mapping[str, str] | None = None,
+        *,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        seed: int | None = None,
+    ) -> OpenAICompatProvider:
         """从环境变量构造。缺少 LLM_API_KEY 时抛 `LLMConfigError`。"""
         env = os.environ if environ is None else environ
         api_key = (env.get(ENV_API_KEY) or "").strip()
@@ -181,16 +205,42 @@ class OpenAICompatProvider(BaseProvider):
             )
         base_url = (env.get(ENV_BASE_URL) or "").strip() or None
         model = (env.get(ENV_MODEL) or "").strip() or DEFAULT_MODEL
-        return cls(api_key=api_key, model=model, base_url=base_url)
+        return cls(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            temperature=temperature,
+            top_p=top_p,
+            seed=seed,
+        )
+
+    def _payload(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        *,
+        tools: Sequence[Mapping[str, Any]] | None = None,
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        """按需拼请求 payload。采样参数为 None 时不写键，保持旧请求逐字节不变。"""
+        payload: dict[str, Any] = {"model": self.model, "messages": list(messages)}
+        if tools:
+            payload["tools"] = list(tools)
+        if stream:
+            payload["stream"] = True
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
+        if self.seed is not None:
+            payload["seed"] = self.seed
+        return payload
 
     async def chat(
         self,
         messages: Sequence[Mapping[str, Any]],
         tools: Sequence[Mapping[str, Any]] | None = None,
     ) -> LLMResponse:
-        payload: dict[str, Any] = {"model": self.model, "messages": list(messages)}
-        if tools:
-            payload["tools"] = list(tools)
+        payload = self._payload(messages, tools=tools)
         try:
             response = await self._client.chat.completions.create(**payload)
         except Exception as exc:
@@ -210,16 +260,16 @@ class OpenAICompatProvider(BaseProvider):
         if on_text is None:
             return await self.chat(messages, tools=tools)
 
-        payload: dict[str, Any] = {"model": self.model, "messages": list(messages), "stream": True}
-        if tools:
-            payload["tools"] = list(tools)
+        payload = self._payload(messages, tools=tools, stream=True)
 
         chunks: list[str] = []
         accumulator: dict[int, dict[str, str]] = {}
+        response_metadata: dict[str, Any] = {}
         try:
             stream = await self._client.chat.completions.create(**payload)
             try:
                 async for chunk in stream:
+                    response_metadata.update(self._response_metadata(chunk))
                     choices = getattr(chunk, "choices", None) or []
                     if not choices:
                         continue
@@ -242,7 +292,11 @@ class OpenAICompatProvider(BaseProvider):
             for _, item in sorted(accumulator.items())
             if item["name"]
         )
-        return LLMResponse(content="".join(chunks), tool_calls=calls)
+        return LLMResponse(
+            content="".join(chunks),
+            tool_calls=calls,
+            metadata=response_metadata,
+        )
 
     async def aclose(self) -> None:
         """关闭底层 HTTP 客户端。
@@ -254,6 +308,26 @@ class OpenAICompatProvider(BaseProvider):
             result = self._client.close()
             if inspect.isawaitable(result):
                 await result
+
+    @staticmethod
+    def _response_metadata(response: Any) -> dict[str, Any]:
+        metadata: dict[str, Any] = {}
+        model = getattr(response, "model", None)
+        if model:
+            metadata["model_version"] = str(model)
+        fingerprint = getattr(response, "system_fingerprint", None)
+        if fingerprint:
+            metadata["system_fingerprint"] = str(fingerprint)
+        request_id = getattr(response, "_request_id", None) or getattr(response, "request_id", None)
+        if request_id:
+            metadata["request_id"] = str(request_id)
+        response_id = getattr(response, "id", None)
+        if response_id:
+            metadata["response_id"] = str(response_id)
+        created = getattr(response, "created", None)
+        if created is not None:
+            metadata["created"] = created
+        return metadata
 
     @staticmethod
     def _to_response(response: Any) -> LLMResponse:
@@ -276,4 +350,8 @@ class OpenAICompatProvider(BaseProvider):
                     arguments=getattr(function, "arguments", None) or "{}",
                 )
             )
-        return LLMResponse(content=getattr(message, "content", None) or "", tool_calls=tuple(calls))
+        return LLMResponse(
+            content=getattr(message, "content", None) or "",
+            tool_calls=tuple(calls),
+            metadata=OpenAICompatProvider._response_metadata(response),
+        )

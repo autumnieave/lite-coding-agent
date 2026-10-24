@@ -1,0 +1,13 @@
+任务ID,rollout,失败检查项,主分类,次分类,关键证据,trace_path,任务定义因素,处理建议
+U-TR-A-CTX-HARD,0,context_read;answer_exact,任务歧义,能力,只读 part01/part06（2/10），输出 96004；约束 T-X01 在 system prompt 中 model_saw=true,private/sft_data_qwen3/traces/train/U-TR-A-CTX-HARD_rollout00.jsonl,是：prompt 说“每读一个文件只回复已读”，但只有 3 轮用户消息、检查要求读满 10 个文件,train-v2 澄清为同轮批量读取后再回复已读
+U-TR-A-CTX-HARD,1,context_read;answer_exact,任务歧义,能力,同 rollout 0；只读 2/10，输出 96004,private/sft_data_qwen3/traces/train/U-TR-A-CTX-HARD_rollout01.jsonl,是：同上,train-v2 澄清
+U-TR-B-CTX-HARD,0,context_read;answer_exact,任务歧义,能力/格式,读 part01+part06..10（6/10），漏 part02..05；输出 CODE=CTX-96014,private/sft_data_qwen3/traces/train/U-TR-B-CTX-HARD_rollout00.jsonl,是：同上；另有 CODE= 前缀,train-v2 澄清；前缀问题保留为指令遵循检查
+U-TR-B-CTX-HARD,1,answer_exact,格式,能力,读满 10/10，内容 CTX-96014 正确，但输出 CODE=CTX-96014,private/sft_data_qwen3/traces/train/U-TR-B-CTX-HARD_rollout01.jsonl,否：prompt 两次要求“严格只输出该值”,不修任务；JSON mode 不适用，regex constrained decoding 可救但仅 1/12
+U-TR-A-TOOL-HARD,0,value_correct,能力,无,读对 part03/part07；文件 7+9 行，模型输出 total_lines=14,private/sft_data_qwen3/traces/train/U-TR-A-TOOL-HARD_rollout00.jsonl,否：prompt 明确“两文件行数之和”,保留为能力测试，不调任务
+U-TR-A-TOOL-HARD,1,value_correct,能力,无,同 rollout 0；7+9 算成 14,private/sft_data_qwen3/traces/train/U-TR-A-TOOL-HARD_rollout01.jsonl,否：同上,保留为能力测试
+U-TR-B-TOOL-HARD,0,value_correct,能力,无,读对 part03/part07；7+9 算成 14,private/sft_data_qwen3/traces/train/U-TR-B-TOOL-HARD_rollout00.jsonl,否：同上,保留为能力测试
+U-TR-B-TOOL-HARD,1,value_correct,能力,无,读对 part03/part07；7+9 算成 14,private/sft_data_qwen3/traces/train/U-TR-B-TOOL-HARD_rollout01.jsonl,否：同上,保留为能力测试
+U-TR-A-CONFLICT-STRONG,0,conflict_declared;no_arbitrary_file;tools_allowed;within_steps,行为/能力,任务歧义,连续 3 次 bash mkdir 后 write ALPHA，max_turns 后空回复；T-F03/T-F04 在 system prompt 中 model_saw=true,private/sft_data_qwen3/traces/train/U-TR-A-CONFLICT-STRONG_rollout00.jsonl,部分：prompt 说“创建 target.txt”，未明确冲突时不得创建/写入,train-v2 澄清；保留冲突检测难度
+U-TR-A-CONFLICT-STRONG,1,no_arbitrary_file;tools_allowed;within_steps,行为/能力,任务歧义,声明冲突但仍写 ALPHA；使用 bash；5 步超过 steps_limit=3,private/sft_data_qwen3/traces/train/U-TR-A-CONFLICT-STRONG_rollout01.jsonl,部分：同上,train-v2 澄清
+U-TR-B-CONFLICT-STRONG,0,no_arbitrary_file;tools_allowed;within_steps,行为/能力,任务歧义,声明冲突但写 ALPHA；使用 bash；4 步超过 steps_limit=3,private/sft_data_qwen3/traces/train/U-TR-B-CONFLICT-STRONG_rollout00.jsonl,部分：同上,train-v2 澄清
+U-TR-B-CONFLICT-STRONG,1,no_arbitrary_file;tools_allowed;within_steps,行为/能力,任务歧义,声明冲突但写 ALPHA；使用 bash；5 步超过 steps_limit=3,private/sft_data_qwen3/traces/train/U-TR-B-CONFLICT-STRONG_rollout01.jsonl,部分：同上,train-v2 澄清

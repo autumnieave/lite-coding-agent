@@ -46,5 +46,9 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if tool is None:
             available = ", ".join(self.names) or "无"
-            return ToolResult.failure(f"未知工具：{name}（可用工具：{available}）")
+            return ToolResult.failure(
+                f"未知工具：{name}（可用工具：{available}）",
+                error_kind="unknown_tool",
+                validation_stage="post_generation_pre_execution",
+            )
         return await tool.run(arguments)

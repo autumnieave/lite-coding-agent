@@ -143,3 +143,59 @@ async def test_execute_unexpected_exception_becomes_failure() -> None:
     assert "工具执行异常" in result.content
     assert "RuntimeError" in result.content
     assert "磁盘炸了" in result.content
+
+
+# ---------- 结构化错误元数据 ----------
+
+
+def test_tool_result_metadata_defaults_to_none() -> None:
+    result = ToolResult.success("ok")
+    assert result.error_kind is None
+    assert result.validation_stage is None
+    assert ToolResult.failure("bad").error_kind is None
+
+
+async def test_path_escape_has_structured_error_metadata(tmp_path: Any) -> None:
+    class _ReadArgs(BaseModel):
+        path: str
+
+    class _ReadTool(Tool):
+        name = "read"
+        description = "读文件"
+        args_model = _ReadArgs
+
+        async def execute(self, args: _ReadArgs) -> ToolResult:
+            from agent.tools.base import resolve_path
+
+            resolve_path(tmp_path, args.path)
+            return ToolResult.success("ok")
+
+    result = await _ReadTool().run('{"path": "../outside.txt"}')
+    assert result.ok is False
+    assert "越界" in result.content
+    assert result.error_kind == "path_escape"
+    assert result.validation_stage == "post_generation_pre_execution"
+
+
+async def test_json_and_pydantic_errors_are_classified() -> None:
+    bad_json = await ToolRegistry([_EchoTool()]).execute("echo", "{bad")
+    assert bad_json.error_kind == "json_decode"
+    assert bad_json.validation_stage == "post_generation_pre_execution"
+
+    bad_args = await ToolRegistry([_EchoTool()]).execute("echo", "{}")
+    assert bad_args.error_kind == "pydantic_validation"
+    assert bad_args.validation_stage == "post_generation_pre_execution"
+
+
+async def test_tool_and_internal_errors_are_classified() -> None:
+    tool_error = await ToolRegistry([_EchoTool(error=ToolError("文件不存在"))]).execute(
+        "echo", '{"text": "x"}'
+    )
+    assert tool_error.error_kind == "tool_error"
+    assert tool_error.validation_stage == "execution"
+
+    internal = await ToolRegistry([_EchoTool(error=RuntimeError("boom"))]).execute(
+        "echo", '{"text": "x"}'
+    )
+    assert internal.error_kind == "internal_error"
+    assert internal.validation_stage == "execution"

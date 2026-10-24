@@ -43,9 +43,26 @@ class _FakeClient:
         self.chat = SimpleNamespace(completions=self.completions)
 
 
-def _raw_response(content: str | None = None, tool_calls: list[Any] | None = None) -> Any:
+def _raw_response(
+    content: str | None = None,
+    tool_calls: list[Any] | None = None,
+    *,
+    model: str | None = None,
+    system_fingerprint: str | None = None,
+    request_id: str | None = None,
+    response_id: str | None = None,
+) -> Any:
     message = SimpleNamespace(content=content, tool_calls=tool_calls)
-    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+    response = SimpleNamespace(choices=[SimpleNamespace(message=message)])
+    if model is not None:
+        response.model = model
+    if system_fingerprint is not None:
+        response.system_fingerprint = system_fingerprint
+    if request_id is not None:
+        response._request_id = request_id
+    if response_id is not None:
+        response.id = response_id
+    return response
 
 
 def _raw_tool_call(
@@ -142,6 +159,27 @@ async def test_chat_omits_tools_argument_when_empty() -> None:
 
     assert "tools" not in client.completions.calls[0]
     assert "tools" not in client.completions.calls[1]
+
+
+async def test_chat_records_response_metadata_for_trace_attribution() -> None:
+    client = _FakeClient(
+        response=_raw_response(
+            content="ok",
+            model="gpt-test-2026-10-19",
+            system_fingerprint="fp_test",
+            request_id="req_test",
+            response_id="chatcmpl_test",
+        )
+    )
+
+    response = await _provider(client).chat([user_message("hi")])
+
+    assert response.metadata == {
+        "model_version": "gpt-test-2026-10-19",
+        "system_fingerprint": "fp_test",
+        "request_id": "req_test",
+        "response_id": "chatcmpl_test",
+    }
 
 
 async def test_chat_passes_model_messages_and_tools() -> None:
@@ -358,3 +396,74 @@ async def test_chat_stream_closes_the_stream_on_failure() -> None:
         await _provider(client).chat_stream([user_message("hi")], on_text=lambda _: None)
 
     assert stream.closed is True
+
+
+# ---------- 采样参数 ----------
+
+
+async def test_default_sampling_keeps_payload_unchanged() -> None:
+    """默认 None 时不能凭空多出 temperature/top_p/seed，旧请求行为必须逐键一致。"""
+    client = _FakeClient(response=_raw_response(content="ok"))
+    provider = _provider(client)
+
+    await provider.chat([user_message("hi")])
+
+    payload = client.completions.calls[0]
+    assert set(payload) == {"model", "messages"}
+    assert provider.sampling_config == {
+        "temperature": None,
+        "top_p": None,
+        "seed": None,
+        "is_default": True,
+    }
+
+
+async def test_explicit_sampling_fields_are_forwarded() -> None:
+    client = _FakeClient(response=_raw_response(content="ok"))
+    provider = OpenAICompatProvider(
+        api_key="test-key",
+        model="test-model",
+        client=client,
+        temperature=0.0,
+        top_p=0.9,
+        seed=20261019,
+    )
+
+    await provider.chat([user_message("hi")])
+
+    payload = client.completions.calls[0]
+    assert payload["temperature"] == 0.0
+    assert payload["top_p"] == 0.9
+    assert payload["seed"] == 20261019
+    assert provider.sampling_config["is_default"] is False
+
+
+async def test_streaming_also_forwards_explicit_sampling_fields() -> None:
+    client = _FakeClient(response=_FakeStream([_delta_chunk("答")]))
+    provider = OpenAICompatProvider(
+        api_key="test-key",
+        model="test-model",
+        client=client,
+        temperature=0.0,
+        seed=7,
+    )
+
+    await provider.chat_stream([user_message("hi")], on_text=lambda _: None)
+
+    payload = client.completions.calls[0]
+    assert payload["stream"] is True
+    assert payload["temperature"] == 0.0
+    assert payload["seed"] == 7
+    assert "top_p" not in payload
+
+
+def test_from_env_accepts_sampling_overrides() -> None:
+    provider = OpenAICompatProvider.from_env(
+        {ENV_API_KEY: "k"}, temperature=0.0, top_p=0.8, seed=11
+    )
+    assert provider.sampling_config == {
+        "temperature": 0.0,
+        "top_p": 0.8,
+        "seed": 11,
+        "is_default": False,
+    }
