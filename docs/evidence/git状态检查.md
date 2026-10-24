@@ -79,9 +79,14 @@
 
 ## 6. 提交后校验
 
-- 提交前：`pytest -q -k "not mcp"`、`ruff check .`、`ruff format --check .` 全绿（见下方回填）。
-- tag 校验：`git tag --list` 与 `git show --stat <tag>`（见下方回填）。
-- 工作区预期：仅剩 `private/` 等被忽略文件；`git status` 干净。
+- `pytest -q -k "not mcp"`：734 passed, 1 skipped, 37 deselected。
+- `ruff check .`：All checks passed；`ruff format --check .`：192 files already formatted。
+- commit 记录：
+  - `7f75e45` `stage-0.0-pre`：历史归档，145 files changed；
+  - `ec92ab5` `stage-0.0`：审计脚本与四维分布，8 files changed；tag `stage-0.0-audit`；
+  - 0.0a：本提交；tag `stage-0.0a-train-v5`。
+- tag 校验：`git tag --list` 输出 `stage-0.0-audit`、`stage-0.0a-train-v5`；两个 tag 均指向对应阶段 commit。
+- 提交后 `git status`：已跟踪文件无未提交改动，仅剩 `private/` 等被 `.gitignore` 排除的本地文件。
 
 ## 7. 后续规则
 
