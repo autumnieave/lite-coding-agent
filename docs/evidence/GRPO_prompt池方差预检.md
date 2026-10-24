@@ -33,7 +33,7 @@
 | 尝试 | 状态 | 证据与处理 |
 | --- | --- | --- |
 | v1 `autumnsq/lite-agent-grpo-pool-preflight` | ERROR | `ModuleNotFoundError: No module named 'agent'`；已修 `sys.path`，未在原 kernel 上无限重推 |
-| v2 `autumnsq/lite-agent-grpo-pool-preflight-v2` | 状态查询 403 Forbidden | 推送成功后查询 `/kernels/status` 被 Kaggle 拒绝；没有可见的 `summary.json`、`runs.jsonl` 或完成日志 |
+| v2 `autumnsq/lite-agent-grpo-prompt-pool-preflight-v2` | ERROR | 首次状态查询返回 403；2026-10-24 复诊 `kernels status` 返回 `ERROR`，`failure_message` 为空；`kernels output` 60s 无返回，仍无 `summary.json`/`runs.jsonl`；详见 `docs/evidence/GRPO失败诊断.md` |
 
 **实际 rollout 数：0/800（100 prompt × 8）**。由于没有可读取的输出，不能计算过滤后池数量、通过率分布或 reward variance；这些字段保持未验证，不伪造数字。
 
@@ -42,4 +42,4 @@
 - 预检状态：**完成，但运行侧未验证**。原因不是协议或任务设计结论，而是 Kaggle kernel 的模块错误后，新 kernel 状态接口持续 403。
 - 按预注册止损：不重复推送、不更换采样配置、不以本地推断替代 GPU 结果；**GRPO 降级为可选，当前不启动**。
 - 不能写“组内方差不足”，因为 0 条 rollout 不提供方差证据；只能写“组内方差未验证，GRPO 暂缓”。
-- 若后续恢复 Kaggle，直接使用现有 v2 kernel 配置重试一次；只有拿到 ≥50 条 20%–80% prompt，才进入 GRPO 训练分支。
+- 若后续恢复 Kaggle，先修打包/权限，再最多重试一次；只有拿到 ≥50 条 20%–80% prompt，才进入 GRPO 训练分支。本轮不重推。

@@ -316,6 +316,44 @@ DPO 方法对照第一次运行（kernel `autumnsq/lite-agent-method-dpo` versio
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`：减少碎片。
 
 `max_seq_length=3072`、`beta=0.1`、`lr=5e-5`、1 epoch、数据、rank 均不变。version 2
-已重新推送（QUEUED），结果出来后再写入 `训练管线验证.md`。v1 的 SFT 阶段不产生
-DPO 指标，不能把这次 OOM 写成“DPO 无效”；但它消耗了一次 GPU session（约 1.5 小时
-SFT），是必须记录的成本。
+仍失败：在 `Train dataset reference log probs` 预计算阶段 OOM（`Tried to allocate
+2.34 GiB`）。进一步审计发现 v2 实际仍读取 `private/dpo_v1/`，`--init-adapter` 仍是
+train-v4 SFT adapter；因此 v2 只验证了“加 precompute 后仍 OOM”，没有测试 dpo_v2
+数据。详见 `docs/evidence/DPO失败诊断.md`。v1/v2 都不产生 DPO 指标，不能把 OOM
+写成“DPO 无效”；v1 SFT 5070.6s、v2 SFT 5795.2s，是必须记录的成本。
+
+### 14. DPO v3 版本对齐与单 step smoke（2026-10-24）
+
+DPO v3 不再让 kernel 重新训练 SFT，而是通过 `kernel_sources` 挂载
+`autumnsq/lite-agent-method-assistant-train-v5`。提交前固定并复算：
+
+- dpo_v2 数据：train 45 / val 13，train SHA `691ea266...43aed`，val SHA
+  `4072a9fe...466f2`；
+- train-v5 assistant-only adapter：645,975,704 bytes，SHA
+  `f5b685d4...29fea7`；
+- `dpo_7b_t4.json`：`max_prompt_length=3072`、`max_seq_length=3072`；
+- smoke kernel：`autumnsq/lite-agent-method-dpo-smoke-v3-train-v5` version 1，
+  `max_steps=1`。
+
+`train_dpo.py` 在加载模型前校验三个 SHA，不匹配直接失败；`run_manifest.json` 在
+`trainer.train()` 前落盘，OOM 也会保留版本与 error_kind。注意 `precompute_ref_log_probs=true`
+会先遍历 45 条 train 做 reference 预计算，因此 `max_steps=1` 不是“只读一个 batch”。
+
+**实测结果**（`autumnsq/lite-agent-method-dpo-smoke-v3-train-v5` version 1）：
+
+| 项目 | 实测 |
+| --- | --- |
+| 状态 | `ERROR` |
+| 版本校验 | train / val / init adapter 三个 `sha256_verified` 全为 `true` |
+| 数据 | 45 train / 13 val；实际读取 `private/dpo_v2/` |
+| init adapter | train-v5 assistant-only，645,975,704 bytes |
+| 观测 token | prompt max 2998；chosen+prompt max 3006；rejected+prompt max 3008；截断 0 对 |
+| reference precompute shape | `2 × 3008 × 151,643` = 912,284,288 logits 元素 |
+| 失败位置 | `compute_ref_log_probs -> concatenated_forward -> logits.log_softmax`，进度 `0/45` |
+| OOM 分配请求 | `Tried to allocate 3.21 GiB`；GPU 仅剩 122.81 MiB |
+| 产出 | optimizer step 0、DPO adapter 未产出、held-out/rollout 0 |
+| 成本 | DPO 阶段 106.7s；kernel 总计约 227.2s（1 个 T4 session，无可用指标） |
+
+**结论**：版本错配已被排除；T4 16GB 不支持“3072 序列 + 4-bit 7B + chosen/rejected
+双行完整词表 logits”。不重推 T4，不降到 1024，不再调 `precompute_ref_batch_size`
+（已是最小 batch）。若继续 DPO，24GB 单卡是唯一有意义的硬门槛；本轮未租。

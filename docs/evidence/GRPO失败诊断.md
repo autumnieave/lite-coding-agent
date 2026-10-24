@@ -1,0 +1,181 @@
+# GRPO 失败诊断
+
+**日期**：2026-10-24  
+**范围**：只读诊断 GRPO prompt-pool preflight v1/v2；不重推 kernel，不修改 reward 或训练代码。  
+**证据**：`private/kaggle_pull_grpo_preflight_v1/`、`private/kaggle_pull_grpo_preflight_v2/`、`docs/evidence/GRPO_prompt池方差预检.csv`、`scripts/grpo_prompt_pool.py`、`tests/test_training_reward.py`、`tests/test_reward_penalties.py`、`tests/test_reward_validation.py`。
+
+## 0. 结论先行
+
+- v1 是 **打包/路径问题**：`ModuleNotFoundError: No module named 'agent'`，缺的是 `src` 进入 import path，不是 reward bug，也不是模型能力或 GRPO 方法问题。
+- v2 首次状态查询确实返回过 Kaggle API `403 Permission 'kernels.get' was denied`；但 2026-10-24 复诊时 status 接口已恢复，v2 当前为 **`KernelWorkerStatus.ERROR`**，`failure_message` 为空。v2 的具体内核错误仍未知，不能写成“v1 的 import 错误在 v2 复现”。
+- 账号下可读取状态的 kernel 中没有 `RUNNING`/`QUEUED`；v1/v2 都是 `ERROR`，没有证据显示 GRPO 被其他 kernel 占用 GPU 配额。
+- reward 本地回归 11/11 通过，没有发现 reward 代码 bug 证据。用户提到的 `tests/test_reward.py` 不存在。
+- 候选池有 100 条（5 类各 20），但 `grpo_prompts_filtered.jsonl` 不存在，实际 rollout 为 **0/800**；不能计算 20%–80% 过滤后数量、通过率分布或组内方差。
+- 决策：本轮不修、不重推，GRPO 保持可选分支。恢复时先修打包并重新获取有 `kernels.get` 权限的 token，最多重试一次。
+
+## 1. v1：`agent` import 路径错误
+
+**kernel**：`autumnsq/lite-agent-grpo-prompt-pool-preflight`  
+**状态**：`ERROR`  
+**耗时**：83.4s；其中 model download 73.4s，`grpo_prompt_pool` 阶段 0.2s。
+
+完整关键堆栈：
+
+```text
+File "/kaggle/working/repo/scripts/grpo_prompt_pool.py", line 376, in <module>
+  raise SystemExit(main())
+File "/kaggle/working/repo/scripts/grpo_prompt_pool.py", line 301, in main
+  from training.kaggle.transformers_provider import TransformersOfflineProvider
+File "/kaggle/working/repo/training/kaggle/transformers_provider.py", line 14, in <module>
+  from agent.core.llm import BaseProvider, LLMResponse
+ModuleNotFoundError: No module named 'agent'
+```
+
+对应日志：`private/kaggle_pull_grpo_preflight_v1/lite-agent-grpo-prompt-pool-preflight.log:8-18`。
+
+诊断：
+
+- v1 打包进去的 `private/kaggle_pull_grpo_preflight_v1/repo/scripts/grpo_prompt_pool.py` **没有** `sys.path.insert(...)`；
+- 当前仓库的 `scripts/grpo_prompt_pool.py:24-25` 已有：
+
+```python
+sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT))
+```
+
+- 失败发生在 import 阶段，模型下载完成后只跑了 0.2s，尚未进入 GPU rollout，因此不是 reward 或组内方差问题；
+- 这与 small model v10 的 `ModuleNotFoundError: training` 不是同一错误：这里缺的是 `agent`，属于 `src` 未进入 import path 的打包/路径问题。
+
+## 2. v2：历史 403 与当前 ERROR
+
+**kernel**：`autumnsq/lite-agent-grpo-prompt-pool-preflight-v2`  
+**`kaggle kernels list -m` 的 lastRunTime**：`2026-10-24 08:50:32.777`
+
+### 2.1 首次状态查询的 403 原文
+
+当次通过 Kaggle SDK 请求 `GetKernelSessionStatus`，原始响应体为：
+
+```json
+{"error":{"code":403,"message":"Permission 'kernels.get' was denied","status":"PERMISSION_DENIED"}}
+```
+
+同一时间 `kaggle kernels status autumnsq/lite-agent-grpo-prompt-pool-preflight-v2` 和 `kaggle kernels output ...` 也返回 403。这个 403 是 **Kaggle API 权限拒绝**，不是 kernel 内部训练代码返回的 403。
+
+### 2.2 2026-10-24 复诊
+
+status 接口已恢复，CLI 返回：
+
+```text
+autumnsq/lite-agent-grpo-prompt-pool-preflight-v2 has status "KernelWorkerStatus.ERROR"
+```
+
+同一响应中 `failure_message` 为空。`kaggle kernels output` 重试 60s 无返回后终止，本地 `private/kaggle_pull_grpo_preflight_v2/` 为空，没有 `summary.json`、`runs.jsonl` 或训练日志。
+
+因此：
+
+- v2 的最终状态可确认是 **ERROR**；
+- v2 的具体失败原因 **未取得**，不能断言仍是 `agent` import 错误；
+- 也不能把 403 写成“kernel 训练失败”或“GRPO 方法失败”；
+- 本次未进行浏览器 UI 双确认，只有 Kaggle CLI/API 状态与 `kernels list -m` 的交叉记录。
+
+## 3. GPU 名额审计
+
+2026-10-24 只读遍历账号下 31 个 kernel 的 session status：
+
+| 状态 | 数量 | 说明 |
+| --- | ---: | --- |
+| `COMPLETE` | 16 | 已完成 |
+| `ERROR` | 6 | 含 GRPO v1/v2、DPO、7B AWQ、constrained decoding 等 |
+| `CANCEL_ACKNOWLEDGED` | 1 | 已取消 |
+| `RUNNING` | 0 | 无 |
+| `QUEUED` | 0 | 无 |
+| status 查询 HTTPError | 8 | 旧 kernel，无法读取状态 |
+
+结论：
+
+- 当前可读取状态的 23 个 kernel 中，没有 `RUNNING`/`QUEUED`；
+- v1/v2 都是 `ERROR`，不占用 GPU；
+- 8 个旧 kernel 的 status 查询失败，不能据此推断它们的 GPU 占用，但没有任何证据显示 GRPO 被它们挤占；
+- 403 更符合 token 权限问题，而不是 GPU 配额问题。
+
+## 4. reward 回归与覆盖映射
+
+用户要求运行的 `tests/test_reward.py` **不存在**。实际执行的是以下三个文件，共 11 个测试：
+
+| 测试文件 | 测试数 | 覆盖内容 |
+| --- | ---: | --- |
+| `tests/test_training_reward.py` | 5 | JSON 可解析、snake_case、路径越界、真实文件观察、文件任务硬门禁 |
+| `tests/test_reward_penalties.py` | 4 | 重复调用、`within_steps`、答案后调用、`tools_allowed` |
+| `tests/test_reward_validation.py` | 2 | reward 检查项与 trace 检查项对齐 |
+
+用户要求的四个行为信号均有独立测试：
+
+| reward 项 | 对应测试 |
+| --- | --- |
+| `tools_allowed` | `test_disallowed_tool_is_an_independent_penalty` |
+| 重复调用 | `test_repeated_identical_calls_are_penalized` |
+| 答案后调用 | `test_tool_call_after_answer_is_penalized` |
+| `within_steps` | `test_within_steps_failure_sets_zero_reward` |
+
+运行结果：
+
+```text
+11 passed
+```
+
+没有发现 reward 代码 bug 的证据。该结果只证明本地 reward 回归通过，不代表 Kaggle 上的 GRPO 训练已经可用。
+
+## 5. prompt 池、过滤后池与 rollout 状态
+
+候选池：`docs/evidence/GRPO_prompt池方差预检.csv`
+
+| 项目 | 值 |
+| --- | --- |
+| 行数 | 100 |
+| BASE / HARD / CTX / TOOL / CONFLICT | 20 / 20 / 20 / 20 / 20 |
+| SHA-256 | `d73daddbc69f8c9745ae03365d5710c595e0fc64686ecac7c03a2e7404c10674` |
+| `run_status` | 全部 `not_run_kaggle_403` |
+| 实际 rollout | 0/800（100 prompt x 8） |
+
+仓库中不存在 `grpo_prompts_filtered.jsonl`。本轮**没有生成过滤后池**，原因是：
+
+1. 候选池需要 train-v5 assistant-only SFT 模型对 100 条 prompt 各采样 8 次，但 v1/v2 均未产出任何 rollout（实际 0/800）；
+2. 用户明确要求本轮不修 GRPO 打包、不修 token 权限、不重推 kernel；
+3. 本地只有 MX250 2GB，不能运行 7B 采样，无法用本地结果替代 Kaggle rollout。
+
+因此本节的结论是“**过滤后池未生成、通过率分布未验证、组内方差未验证**”，而不是“过滤后池不足”：
+
+| 项目 | 结果 |
+| --- | --- |
+| 候选池 | 100 条，5 类各 20 |
+| 实际 rollout | 0/800 |
+| 过滤后 20%–80% prompt 数 | 未验证 |
+| 通过率分布 / reward variance | 未验证 |
+| `grpo_prompts_filtered.jsonl` | 未生成 |
+
+如果未来恢复运行并得到 ≥50 条 20%–80% prompt，GRPO 仍只保持“可选”，不自动启动；如果 <50 条，才写“池不足、组内方差信号稀疏”。本轮两种数字都不能伪造。
+
+## 6. 修复决策
+
+| 分支 | 决策 | 理由 |
+| --- | --- | --- |
+| 本轮 GRPO | **不修、不重推** | 0 rollout，且 v2 具体错误未取得；继续重推只会消耗 GPU session |
+| GRPO 定位 | **可选分支，不启动** | reward 回归通过，但过滤后池和组内方差未验证，不能进入训练主线 |
+| 未来恢复 | 最多重试一次 | 先确认打包包含 `src` 的 `sys.path`，再获取有 `kernels.get` 权限的 Kaggle token；仍失败就停止 |
+| 结果口径 | **未验证** | 不写“GRPO 无效”，也不写“组内方差不足” |
+
+恢复前的检查清单：
+
+1. 重新生成 kernel bundle，并在远端确认 `scripts/grpo_prompt_pool.py` 含 `sys.path.insert(.../src)`；
+2. 用最小 `staging` 模式先跑 3 条，确认 `errors=0` 且至少 1 条 `task_success=true`；
+3. 重新生成/更换 Kaggle API token，确认 `kernels status` 和 `kernels output` 都有权限；
+4. 只有拿到 ≥50 条 20%–80% prompt，才进入 GRPO 训练分支；
+5. 若再失败，保持“GRPO 可选、未验证”，不继续消耗 session。
+
+## 7. 成本与边界
+
+- v1：83.4s，其中模型下载 73.4s，脚本 0.2s；没有 rollout；
+- v2：至少一次推送并产生 `lastRunTime`；是否实际占用 GPU、占用多久，无法从输出确认；不伪造耗时或 rollout；
+- 本文只读诊断，没有重推 kernel，没有修改 `core/loop.py`、`compaction.py`、`constraints.py`，没有修改 reward 逻辑。
+
+**相关文档**：`docs/evidence/GRPO_prompt池方差预检.md`、`docs/evidence/GRPO_prompt池方差预检.csv`、`docs/plan/训练侧执行计划.md`。
