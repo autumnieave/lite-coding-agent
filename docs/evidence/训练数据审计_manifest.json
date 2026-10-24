@@ -1,0 +1,1403 @@
+{
+  "boundary_effective": {
+    "CONFLICT-STRONG": 38,
+    "CTX-HARD": 0,
+    "TOOL-HARD": 24
+  },
+  "boundary_raw": {
+    "CONFLICT-STRONG": 38,
+    "CTX-HARD": 19,
+    "TOOL-HARD": 24
+  },
+  "counts": {
+    "train_effective": 361,
+    "train_excluded": 19,
+    "train_raw": 380,
+    "val_effective": 74,
+    "val_excluded": 6,
+    "val_raw": 80
+  },
+  "decision": {
+    "decision": "补数据",
+    "hard_effective": 77,
+    "min_constraint_type_pct": 16.9,
+    "minimum_supplement": {
+      "BASE": 7,
+      "CTX-HARD": 19,
+      "HARD": 3,
+      "total": 29
+    },
+    "rationale": [
+      "CTX-HARD 19 条全部因 3072 超长被丢，有效 0",
+      "long context 有效 0",
+      "BASE 23 条，低于 30 条目标下限",
+      "context_recall 模板 28 条，占 7.76%",
+      "DeepSeek 教师在 context_recall/constraint_edit 通过率 62.50%"
+    ],
+    "target_range": "450–500 train / 80–100 val，只补缺口",
+    "threshold_branch": "HARD 50–79 灰区；一次性决定"
+  },
+  "effective_train": {
+    "category": {
+      "BASE": {
+        "count": 23,
+        "pct": 6.37
+      },
+      "CONFLICT": {
+        "count": 89,
+        "pct": 24.65
+      },
+      "CTX": {
+        "count": 28,
+        "pct": 7.76
+      },
+      "HARD": {
+        "count": 77,
+        "pct": 21.33
+      },
+      "TOOL": {
+        "count": 144,
+        "pct": 39.89
+      }
+    },
+    "category_types": {
+      "BASE": {
+        "format": {
+          "count": 23,
+          "pct": 100.0
+        },
+        "steps": {
+          "count": 23,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 23,
+          "pct": 100.0
+        }
+      },
+      "CONFLICT": {
+        "conflict_tradeoff": {
+          "count": 61,
+          "pct": 68.54
+        },
+        "format": {
+          "count": 51,
+          "pct": 57.3
+        },
+        "steps": {
+          "count": 89,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 89,
+          "pct": 100.0
+        }
+      },
+      "CTX": {
+        "format": {
+          "count": 28,
+          "pct": 100.0
+        },
+        "steps": {
+          "count": 28,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 28,
+          "pct": 100.0
+        }
+      },
+      "HARD": {
+        "format": {
+          "count": 28,
+          "pct": 36.36
+        },
+        "path": {
+          "count": 49,
+          "pct": 63.64
+        },
+        "steps": {
+          "count": 77,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 77,
+          "pct": 100.0
+        }
+      },
+      "TOOL": {
+        "format": {
+          "count": 144,
+          "pct": 100.0
+        },
+        "path": {
+          "count": 52,
+          "pct": 36.11
+        },
+        "steps": {
+          "count": 144,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 144,
+          "pct": 100.0
+        }
+      }
+    },
+    "check_types": {
+      "file": {
+        "count": 117,
+        "pct": 32.41
+      },
+      "format": {
+        "count": 244,
+        "pct": 67.59
+      },
+      "semantic": {
+        "count": 284,
+        "pct": 78.67
+      },
+      "step": {
+        "count": 361,
+        "pct": 100.0
+      },
+      "tool": {
+        "count": 361,
+        "pct": 100.0
+      }
+    },
+    "constraint_count": {
+      "2": {
+        "count": 120,
+        "pct": 33.24
+      },
+      "3": {
+        "count": 213,
+        "pct": 59.0
+      },
+      "5": {
+        "count": 28,
+        "pct": 7.76
+      }
+    },
+    "constraint_types": {
+      "conflict_tradeoff": {
+        "count": 61,
+        "pct": 16.9
+      },
+      "format": {
+        "count": 274,
+        "pct": 75.9
+      },
+      "path": {
+        "count": 101,
+        "pct": 27.98
+      },
+      "steps": {
+        "count": 361,
+        "pct": 100.0
+      },
+      "tool_whitelist": {
+        "count": 361,
+        "pct": 100.0
+      }
+    },
+    "context_length": {
+      "medium": {
+        "count": 73,
+        "pct": 20.22
+      },
+      "short": {
+        "count": 288,
+        "pct": 79.78
+      }
+    },
+    "difficulty": {
+      "medium": {
+        "count": 122,
+        "pct": 33.8
+      },
+      "strong": {
+        "count": 100,
+        "pct": 27.7
+      },
+      "weak": {
+        "count": 139,
+        "pct": 38.5
+      }
+    },
+    "duplicates": {
+      "exact_prompt_groups_with_multiple_rows": 46,
+      "exact_prompt_rows_in_duplicate_groups": 166,
+      "extra_rows_in_task_groups": 74,
+      "max_rows_per_task": 10,
+      "normalized_prompt_groups_with_multiple_rows": 11,
+      "normalized_prompt_rows_in_duplicate_groups": 274,
+      "task_groups_with_multiple_rows": 15,
+      "unique_exact_prompts": 241,
+      "unique_normalized_prompts": 98,
+      "unique_task_ids": 287
+    },
+    "rows": 361,
+    "source": {
+      "deepseek_teacher": {
+        "count": 89,
+        "pct": 24.65
+      },
+      "deterministic_oracle": {
+        "count": 180,
+        "pct": 49.86
+      },
+      "xlam_schema_mapped": {
+        "count": 92,
+        "pct": 25.48
+      }
+    },
+    "step_budget": {
+      "controlled_at_or_over_limit": 0,
+      "controlled_margin_at_1": 7,
+      "controlled_margin_distribution": {
+        "1": {
+          "count": 7,
+          "pct": 2.6
+        },
+        "2": {
+          "count": 154,
+          "pct": 57.25
+        },
+        "3": {
+          "count": 108,
+          "pct": 40.15
+        }
+      },
+      "controlled_min_margin": 1,
+      "controlled_rows": 269,
+      "public_rows_without_recorded_limit": 92,
+      "public_step_sample": {
+        "ids": [
+          "train-v4:public-xlam:00001",
+          "train-v4:public-xlam:00002",
+          "train-v4:public-xlam:00003",
+          "train-v4:public-xlam:00004",
+          "train-v4:public-xlam:00006",
+          "train-v4:public-xlam:00007",
+          "train-v4:public-xlam:00008",
+          "train-v4:public-xlam:00009",
+          "train-v4:public-xlam:00011",
+          "train-v4:public-xlam:00012",
+          "train-v4:public-xlam:00013",
+          "train-v4:public-xlam:00014",
+          "train-v4:public-xlam:00016",
+          "train-v4:public-xlam:00017",
+          "train-v4:public-xlam:00018",
+          "train-v4:public-xlam:00019",
+          "train-v4:public-xlam:00021",
+          "train-v4:public-xlam:00022",
+          "train-v4:public-xlam:00023",
+          "train-v4:public-xlam:00024"
+        ],
+        "sampled_rows": 20,
+        "tool_call_count": {
+          "1": {
+            "count": 3,
+            "pct": 15.0
+          },
+          "2": {
+            "count": 14,
+            "pct": 70.0
+          },
+          "3": {
+            "count": 2,
+            "pct": 10.0
+          },
+          "4": {
+            "count": 1,
+            "pct": 5.0
+          }
+        },
+        "within_steps_true": 20
+      },
+      "rows_with_unknown_limit": 0
+    },
+    "template": {
+      "conflict": {
+        "count": 89,
+        "pct": 24.65
+      },
+      "constraint_edit": {
+        "count": 49,
+        "pct": 13.57
+      },
+      "context_recall": {
+        "count": 28,
+        "pct": 7.76
+      },
+      "json_constraints": {
+        "count": 51,
+        "pct": 14.13
+      },
+      "path_params": {
+        "count": 52,
+        "pct": 14.4
+      },
+      "public_grep": {
+        "count": 92,
+        "pct": 25.48
+      }
+    },
+    "template_source": {
+      "conflict": {
+        "deepseek_teacher": 35,
+        "deterministic_oracle": 54
+      },
+      "constraint_edit": {
+        "deepseek_teacher": 13,
+        "deterministic_oracle": 36
+      },
+      "context_recall": {
+        "deepseek_teacher": 10,
+        "deterministic_oracle": 18
+      },
+      "json_constraints": {
+        "deepseek_teacher": 15,
+        "deterministic_oracle": 36
+      },
+      "path_params": {
+        "deepseek_teacher": 16,
+        "deterministic_oracle": 36
+      },
+      "public_grep": {
+        "xlam_schema_mapped": 92
+      }
+    },
+    "tools_allowed": {
+      "grep": {
+        "count": 92,
+        "pct": 25.48
+      },
+      "read_file": {
+        "count": 52,
+        "pct": 14.4
+      },
+      "read_file, edit_file, grep": {
+        "count": 49,
+        "pct": 13.57
+      },
+      "read_file, grep, list_dir": {
+        "count": 28,
+        "pct": 7.76
+      },
+      "read_file, list_dir": {
+        "count": 51,
+        "pct": 14.13
+      },
+      "write_file": {
+        "count": 89,
+        "pct": 24.65
+      }
+    },
+    "trajectory": {
+      "has_full_trajectory": 361,
+      "tool_call_count": {
+        "0": {
+          "count": 38,
+          "pct": 10.53
+        },
+        "1": {
+          "count": 183,
+          "pct": 50.69
+        },
+        "2": {
+          "count": 127,
+          "pct": 35.18
+        },
+        "3": {
+          "count": 11,
+          "pct": 3.05
+        },
+        "4": {
+          "count": 2,
+          "pct": 0.55
+        }
+      },
+      "zero_tool_calls": 38
+    },
+    "unknown": {
+      "check_type": 0,
+      "constraint_tag": 0,
+      "template": 0,
+      "tool_set": 0
+    }
+  },
+  "effective_val": {
+    "category": {
+      "BASE": {
+        "count": 7,
+        "pct": 9.46
+      },
+      "CONFLICT": {
+        "count": 11,
+        "pct": 14.86
+      },
+      "CTX": {
+        "count": 2,
+        "pct": 2.7
+      },
+      "HARD": {
+        "count": 21,
+        "pct": 28.38
+      },
+      "TOOL": {
+        "count": 33,
+        "pct": 44.59
+      }
+    },
+    "category_types": {
+      "BASE": {
+        "format": {
+          "count": 7,
+          "pct": 100.0
+        },
+        "steps": {
+          "count": 7,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 7,
+          "pct": 100.0
+        }
+      },
+      "CONFLICT": {
+        "conflict_tradeoff": {
+          "count": 9,
+          "pct": 81.82
+        },
+        "format": {
+          "count": 9,
+          "pct": 81.82
+        },
+        "steps": {
+          "count": 11,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 11,
+          "pct": 100.0
+        }
+      },
+      "CTX": {
+        "format": {
+          "count": 2,
+          "pct": 100.0
+        },
+        "steps": {
+          "count": 2,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 2,
+          "pct": 100.0
+        }
+      },
+      "HARD": {
+        "format": {
+          "count": 12,
+          "pct": 57.14
+        },
+        "path": {
+          "count": 9,
+          "pct": 42.86
+        },
+        "steps": {
+          "count": 21,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 21,
+          "pct": 100.0
+        }
+      },
+      "TOOL": {
+        "format": {
+          "count": 33,
+          "pct": 100.0
+        },
+        "path": {
+          "count": 9,
+          "pct": 27.27
+        },
+        "steps": {
+          "count": 33,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 33,
+          "pct": 100.0
+        }
+      }
+    },
+    "check_types": {
+      "file": {
+        "count": 13,
+        "pct": 17.57
+      },
+      "format": {
+        "count": 61,
+        "pct": 82.43
+      },
+      "semantic": {
+        "count": 63,
+        "pct": 85.14
+      },
+      "step": {
+        "count": 74,
+        "pct": 100.0
+      },
+      "tool": {
+        "count": 74,
+        "pct": 100.0
+      }
+    },
+    "constraint_count": {
+      "2": {
+        "count": 26,
+        "pct": 35.14
+      },
+      "3": {
+        "count": 36,
+        "pct": 48.65
+      },
+      "5": {
+        "count": 12,
+        "pct": 16.22
+      }
+    },
+    "constraint_types": {
+      "conflict_tradeoff": {
+        "count": 9,
+        "pct": 12.16
+      },
+      "format": {
+        "count": 63,
+        "pct": 85.14
+      },
+      "path": {
+        "count": 18,
+        "pct": 24.32
+      },
+      "steps": {
+        "count": 74,
+        "pct": 100.0
+      },
+      "tool_whitelist": {
+        "count": 74,
+        "pct": 100.0
+      }
+    },
+    "context_length": {
+      "medium": {
+        "count": 16,
+        "pct": 21.62
+      },
+      "short": {
+        "count": 58,
+        "pct": 78.38
+      }
+    },
+    "difficulty": {
+      "medium": {
+        "count": 27,
+        "pct": 36.49
+      },
+      "strong": {
+        "count": 24,
+        "pct": 32.43
+      },
+      "weak": {
+        "count": 23,
+        "pct": 31.08
+      }
+    },
+    "duplicates": {
+      "exact_prompt_groups_with_multiple_rows": 10,
+      "exact_prompt_rows_in_duplicate_groups": 42,
+      "extra_rows_in_task_groups": 25,
+      "max_rows_per_task": 10,
+      "normalized_prompt_groups_with_multiple_rows": 10,
+      "normalized_prompt_rows_in_duplicate_groups": 54,
+      "task_groups_with_multiple_rows": 5,
+      "unique_exact_prompts": 42,
+      "unique_normalized_prompts": 30,
+      "unique_task_ids": 49
+    },
+    "rows": 74,
+    "source": {
+      "deepseek_teacher": {
+        "count": 30,
+        "pct": 40.54
+      },
+      "deterministic_oracle": {
+        "count": 20,
+        "pct": 27.03
+      },
+      "xlam_schema_mapped": {
+        "count": 24,
+        "pct": 32.43
+      }
+    },
+    "step_budget": {
+      "controlled_at_or_over_limit": 0,
+      "controlled_margin_at_1": 5,
+      "controlled_margin_distribution": {
+        "1": {
+          "count": 5,
+          "pct": 10.0
+        },
+        "2": {
+          "count": 27,
+          "pct": 54.0
+        },
+        "3": {
+          "count": 18,
+          "pct": 36.0
+        }
+      },
+      "controlled_min_margin": 1,
+      "controlled_rows": 50,
+      "public_rows_without_recorded_limit": 24,
+      "public_step_sample": {
+        "ids": [
+          "train-v4:public-xlam:00000",
+          "train-v4:public-xlam:00005",
+          "train-v4:public-xlam:00010",
+          "train-v4:public-xlam:00015",
+          "train-v4:public-xlam:00020",
+          "train-v4:public-xlam:00025",
+          "train-v4:public-xlam:00030",
+          "train-v4:public-xlam:00035",
+          "train-v4:public-xlam:00040",
+          "train-v4:public-xlam:00045",
+          "train-v4:public-xlam:00050",
+          "train-v4:public-xlam:00055",
+          "train-v4:public-xlam:00060",
+          "train-v4:public-xlam:00065",
+          "train-v4:public-xlam:00070",
+          "train-v4:public-xlam:00075",
+          "train-v4:public-xlam:00080",
+          "train-v4:public-xlam:00085",
+          "train-v4:public-xlam:00090",
+          "train-v4:public-xlam:00095"
+        ],
+        "sampled_rows": 20,
+        "tool_call_count": {
+          "1": {
+            "count": 7,
+            "pct": 35.0
+          },
+          "2": {
+            "count": 10,
+            "pct": 50.0
+          },
+          "3": {
+            "count": 2,
+            "pct": 10.0
+          },
+          "4": {
+            "count": 1,
+            "pct": 5.0
+          }
+        },
+        "within_steps_true": 20
+      },
+      "rows_with_unknown_limit": 0
+    },
+    "template": {
+      "conflict": {
+        "count": 11,
+        "pct": 14.86
+      },
+      "constraint_edit": {
+        "count": 9,
+        "pct": 12.16
+      },
+      "context_recall": {
+        "count": 2,
+        "pct": 2.7
+      },
+      "json_constraints": {
+        "count": 19,
+        "pct": 25.68
+      },
+      "path_params": {
+        "count": 9,
+        "pct": 12.16
+      },
+      "public_grep": {
+        "count": 24,
+        "pct": 32.43
+      }
+    },
+    "template_source": {
+      "conflict": {
+        "deepseek_teacher": 5,
+        "deterministic_oracle": 6
+      },
+      "constraint_edit": {
+        "deepseek_teacher": 5,
+        "deterministic_oracle": 4
+      },
+      "context_recall": {
+        "deterministic_oracle": 2
+      },
+      "json_constraints": {
+        "deepseek_teacher": 15,
+        "deterministic_oracle": 4
+      },
+      "path_params": {
+        "deepseek_teacher": 5,
+        "deterministic_oracle": 4
+      },
+      "public_grep": {
+        "xlam_schema_mapped": 24
+      }
+    },
+    "tools_allowed": {
+      "grep": {
+        "count": 24,
+        "pct": 32.43
+      },
+      "read_file": {
+        "count": 9,
+        "pct": 12.16
+      },
+      "read_file, edit_file, grep": {
+        "count": 9,
+        "pct": 12.16
+      },
+      "read_file, grep, list_dir": {
+        "count": 2,
+        "pct": 2.7
+      },
+      "read_file, list_dir": {
+        "count": 19,
+        "pct": 25.68
+      },
+      "write_file": {
+        "count": 11,
+        "pct": 14.86
+      }
+    },
+    "trajectory": {
+      "has_full_trajectory": 74,
+      "tool_call_count": {
+        "0": {
+          "count": 2,
+          "pct": 2.7
+        },
+        "1": {
+          "count": 37,
+          "pct": 50.0
+        },
+        "2": {
+          "count": 32,
+          "pct": 43.24
+        },
+        "3": {
+          "count": 2,
+          "pct": 2.7
+        },
+        "4": {
+          "count": 1,
+          "pct": 1.35
+        }
+      },
+      "zero_tool_calls": 2
+    },
+    "unknown": {
+      "check_type": 0,
+      "constraint_tag": 0,
+      "template": 0,
+      "tool_set": 0
+    }
+  },
+  "gate": {
+    "path": "D:/agent/手搓coding_agent/lite-coding-agent/private/kaggle_pull_method_baseline_meta/method/baseline/tokenizer_gate.json",
+    "sha256": "66835d2eb248de5e62ba5c1f433ea89232bfd5bcae720431b59399aef16aeb7f",
+    "train": {
+      "effective_rows": 361,
+      "max_tokens": 6444,
+      "over_max_length": {
+        "train-v4:deepseek:train-v1:U-TR-A-CTX-HARD:rollout7": 6217,
+        "train-v4:oracle:U-TR4-00-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-01-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-02-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-03-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-04-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-05-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-06-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-07-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-08-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-09-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-10-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-11-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-14-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-15-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-16-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-17-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-18-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-19-CTX-HARD:rollout00": 6444
+      },
+      "over_max_length_count": 19,
+      "rows": 380,
+      "token_count_max": 6444,
+      "token_count_p50": 1679
+    },
+    "val": {
+      "effective_rows": 74,
+      "max_tokens": 6900,
+      "over_max_length": {
+        "train-v4:deepseek:train-v1:U-TR-B-CTX-HARD:rollout0": 6900,
+        "train-v4:deepseek:train-v1:U-TR-B-CTX-HARD:rollout6": 6473,
+        "train-v4:deepseek:train-v1:U-TR-B-CTX-HARD:rollout7": 6361,
+        "train-v4:deepseek:train-v1:U-TR-B-CTX-HARD:rollout9": 6874,
+        "train-v4:oracle:U-TR4-12-CTX-HARD:rollout00": 6444,
+        "train-v4:oracle:U-TR4-13-CTX-HARD:rollout00": 6444
+      },
+      "over_max_length_count": 6,
+      "rows": 80,
+      "token_count_max": 6900,
+      "token_count_p50": 1676
+    }
+  },
+  "generated_at": "2026-10-24T02:49:11.963504+00:00",
+  "heldout": [
+    {
+      "exact_rows_in_train": 0,
+      "same_template_rows": 51,
+      "same_template_unique_tasks": 38,
+      "task_id": "U-TR-A-C1-HARD",
+      "template": "json_constraints"
+    },
+    {
+      "exact_rows_in_train": 0,
+      "same_template_rows": 49,
+      "same_template_unique_tasks": 39,
+      "task_id": "U-TR-B-CHECK-BASE",
+      "template": "constraint_edit"
+    },
+    {
+      "exact_rows_in_train": 0,
+      "same_template_rows": 51,
+      "same_template_unique_tasks": 38,
+      "task_id": "U-TR-B-C1-BASE",
+      "template": "json_constraints"
+    },
+    {
+      "exact_rows_in_train": 0,
+      "same_template_rows": 28,
+      "same_template_unique_tasks": 20,
+      "task_id": "U-TR-B-CTX-HARD",
+      "template": "context_recall"
+    },
+    {
+      "exact_rows_in_train": 0,
+      "same_template_rows": 52,
+      "same_template_unique_tasks": 39,
+      "task_id": "U-TR-B-TOOL-HARD",
+      "template": "path_params"
+    },
+    {
+      "exact_rows_in_train": 0,
+      "same_template_rows": 89,
+      "same_template_unique_tasks": 59,
+      "task_id": "U-TR-B-CONFLICT-WEAK",
+      "template": "conflict"
+    }
+  ],
+  "inputs": {
+    "frozen_text": {
+      "path": "D:/agent/手搓coding_agent/lite-coding-agent/private/sft_data_v4/TRAIN_V4_FROZEN.txt",
+      "sha256": "6fb47b6163c8cfbfa900b4c52c31de2c76a4d391d7c31172a153f36f252e8fcd"
+    },
+    "manifest": {
+      "path": "D:/agent/手搓coding_agent/lite-coding-agent/private/sft_data_v4/manifest.json",
+      "sha256": "da7442774109dbf1d6d45a7f313f1545382d7f67eb46ef15b80e712e8cf6fbab"
+    },
+    "train": {
+      "frozen_match": true,
+      "frozen_sha256": "ce52295b28e533b1dc40ae1466d5749c14c7d029c0b4b732d41054745fbda7b8",
+      "path": "D:/agent/手搓coding_agent/lite-coding-agent/private/sft_data_v4/train.jsonl",
+      "rows": 380,
+      "sha256": "ce52295b28e533b1dc40ae1466d5749c14c7d029c0b4b732d41054745fbda7b8"
+    },
+    "val": {
+      "frozen_match": true,
+      "frozen_sha256": "18007e4f1b1c2ffd64984918563eefd190f759445dcf80be46e663b94fb20b77",
+      "path": "D:/agent/手搓coding_agent/lite-coding-agent/private/sft_data_v4/val.jsonl",
+      "rows": 80,
+      "sha256": "18007e4f1b1c2ffd64984918563eefd190f759445dcf80be46e663b94fb20b77"
+    }
+  },
+  "raw_train": {
+    "category": {
+      "BASE": {
+        "count": 23,
+        "pct": 6.05
+      },
+      "CONFLICT": {
+        "count": 89,
+        "pct": 23.42
+      },
+      "CTX": {
+        "count": 47,
+        "pct": 12.37
+      },
+      "HARD": {
+        "count": 77,
+        "pct": 20.26
+      },
+      "TOOL": {
+        "count": 144,
+        "pct": 37.89
+      }
+    },
+    "category_types": {
+      "BASE": {
+        "format": {
+          "count": 23,
+          "pct": 100.0
+        },
+        "steps": {
+          "count": 23,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 23,
+          "pct": 100.0
+        }
+      },
+      "CONFLICT": {
+        "conflict_tradeoff": {
+          "count": 61,
+          "pct": 68.54
+        },
+        "format": {
+          "count": 51,
+          "pct": 57.3
+        },
+        "steps": {
+          "count": 89,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 89,
+          "pct": 100.0
+        }
+      },
+      "CTX": {
+        "format": {
+          "count": 47,
+          "pct": 100.0
+        },
+        "steps": {
+          "count": 47,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 47,
+          "pct": 100.0
+        }
+      },
+      "HARD": {
+        "format": {
+          "count": 28,
+          "pct": 36.36
+        },
+        "path": {
+          "count": 49,
+          "pct": 63.64
+        },
+        "steps": {
+          "count": 77,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 77,
+          "pct": 100.0
+        }
+      },
+      "TOOL": {
+        "format": {
+          "count": 144,
+          "pct": 100.0
+        },
+        "path": {
+          "count": 52,
+          "pct": 36.11
+        },
+        "steps": {
+          "count": 144,
+          "pct": 100.0
+        },
+        "tool_whitelist": {
+          "count": 144,
+          "pct": 100.0
+        }
+      }
+    },
+    "check_types": {
+      "file": {
+        "count": 117,
+        "pct": 30.79
+      },
+      "format": {
+        "count": 244,
+        "pct": 64.21
+      },
+      "semantic": {
+        "count": 303,
+        "pct": 79.74
+      },
+      "step": {
+        "count": 380,
+        "pct": 100.0
+      },
+      "tool": {
+        "count": 380,
+        "pct": 100.0
+      }
+    },
+    "constraint_count": {
+      "2": {
+        "count": 139,
+        "pct": 36.58
+      },
+      "3": {
+        "count": 213,
+        "pct": 56.05
+      },
+      "5": {
+        "count": 28,
+        "pct": 7.37
+      }
+    },
+    "constraint_types": {
+      "conflict_tradeoff": {
+        "count": 61,
+        "pct": 16.05
+      },
+      "format": {
+        "count": 293,
+        "pct": 77.11
+      },
+      "path": {
+        "count": 101,
+        "pct": 26.58
+      },
+      "steps": {
+        "count": 380,
+        "pct": 100.0
+      },
+      "tool_whitelist": {
+        "count": 380,
+        "pct": 100.0
+      }
+    },
+    "context_length": {
+      "long": {
+        "count": 19,
+        "pct": 5.0
+      },
+      "medium": {
+        "count": 73,
+        "pct": 19.21
+      },
+      "short": {
+        "count": 288,
+        "pct": 75.79
+      }
+    },
+    "difficulty": {
+      "medium": {
+        "count": 122,
+        "pct": 32.11
+      },
+      "strong": {
+        "count": 119,
+        "pct": 31.32
+      },
+      "weak": {
+        "count": 139,
+        "pct": 36.58
+      }
+    },
+    "duplicates": {
+      "exact_prompt_groups_with_multiple_rows": 46,
+      "exact_prompt_rows_in_duplicate_groups": 166,
+      "extra_rows_in_task_groups": 74,
+      "max_rows_per_task": 10,
+      "normalized_prompt_groups_with_multiple_rows": 12,
+      "normalized_prompt_rows_in_duplicate_groups": 292,
+      "task_groups_with_multiple_rows": 15,
+      "unique_exact_prompts": 260,
+      "unique_normalized_prompts": 100,
+      "unique_task_ids": 306
+    },
+    "rows": 380,
+    "source": {
+      "deepseek_teacher": {
+        "count": 90,
+        "pct": 23.68
+      },
+      "deterministic_oracle": {
+        "count": 198,
+        "pct": 52.11
+      },
+      "xlam_schema_mapped": {
+        "count": 92,
+        "pct": 24.21
+      }
+    },
+    "step_budget": {
+      "controlled_at_or_over_limit": 0,
+      "controlled_margin_at_1": 7,
+      "controlled_margin_distribution": {
+        "1": {
+          "count": 7,
+          "pct": 2.43
+        },
+        "2": {
+          "count": 154,
+          "pct": 53.47
+        },
+        "3": {
+          "count": 108,
+          "pct": 37.5
+        },
+        "4": {
+          "count": 19,
+          "pct": 6.6
+        }
+      },
+      "controlled_min_margin": 1,
+      "controlled_rows": 288,
+      "public_rows_without_recorded_limit": 92,
+      "public_step_sample": {
+        "ids": [
+          "train-v4:public-xlam:00001",
+          "train-v4:public-xlam:00002",
+          "train-v4:public-xlam:00003",
+          "train-v4:public-xlam:00004",
+          "train-v4:public-xlam:00006",
+          "train-v4:public-xlam:00007",
+          "train-v4:public-xlam:00008",
+          "train-v4:public-xlam:00009",
+          "train-v4:public-xlam:00011",
+          "train-v4:public-xlam:00012",
+          "train-v4:public-xlam:00013",
+          "train-v4:public-xlam:00014",
+          "train-v4:public-xlam:00016",
+          "train-v4:public-xlam:00017",
+          "train-v4:public-xlam:00018",
+          "train-v4:public-xlam:00019",
+          "train-v4:public-xlam:00021",
+          "train-v4:public-xlam:00022",
+          "train-v4:public-xlam:00023",
+          "train-v4:public-xlam:00024"
+        ],
+        "sampled_rows": 20,
+        "tool_call_count": {
+          "1": {
+            "count": 3,
+            "pct": 15.0
+          },
+          "2": {
+            "count": 14,
+            "pct": 70.0
+          },
+          "3": {
+            "count": 2,
+            "pct": 10.0
+          },
+          "4": {
+            "count": 1,
+            "pct": 5.0
+          }
+        },
+        "within_steps_true": 20
+      },
+      "rows_with_unknown_limit": 0
+    },
+    "template": {
+      "conflict": {
+        "count": 89,
+        "pct": 23.42
+      },
+      "constraint_edit": {
+        "count": 49,
+        "pct": 12.89
+      },
+      "context_recall": {
+        "count": 47,
+        "pct": 12.37
+      },
+      "json_constraints": {
+        "count": 51,
+        "pct": 13.42
+      },
+      "path_params": {
+        "count": 52,
+        "pct": 13.68
+      },
+      "public_grep": {
+        "count": 92,
+        "pct": 24.21
+      }
+    },
+    "template_source": {
+      "conflict": {
+        "deepseek_teacher": 35,
+        "deterministic_oracle": 54
+      },
+      "constraint_edit": {
+        "deepseek_teacher": 13,
+        "deterministic_oracle": 36
+      },
+      "context_recall": {
+        "deepseek_teacher": 11,
+        "deterministic_oracle": 36
+      },
+      "json_constraints": {
+        "deepseek_teacher": 15,
+        "deterministic_oracle": 36
+      },
+      "path_params": {
+        "deepseek_teacher": 16,
+        "deterministic_oracle": 36
+      },
+      "public_grep": {
+        "xlam_schema_mapped": 92
+      }
+    },
+    "tools_allowed": {
+      "grep": {
+        "count": 92,
+        "pct": 24.21
+      },
+      "read_file": {
+        "count": 52,
+        "pct": 13.68
+      },
+      "read_file, edit_file, grep": {
+        "count": 49,
+        "pct": 12.89
+      },
+      "read_file, grep, list_dir": {
+        "count": 47,
+        "pct": 12.37
+      },
+      "read_file, list_dir": {
+        "count": 51,
+        "pct": 13.42
+      },
+      "write_file": {
+        "count": 89,
+        "pct": 23.42
+      }
+    },
+    "trajectory": {
+      "has_full_trajectory": 380,
+      "tool_call_count": {
+        "0": {
+          "count": 38,
+          "pct": 10.0
+        },
+        "1": {
+          "count": 183,
+          "pct": 48.16
+        },
+        "10": {
+          "count": 19,
+          "pct": 5.0
+        },
+        "2": {
+          "count": 127,
+          "pct": 33.42
+        },
+        "3": {
+          "count": 11,
+          "pct": 2.89
+        },
+        "4": {
+          "count": 2,
+          "pct": 0.53
+        }
+      },
+      "zero_tool_calls": 38
+    },
+    "unknown": {
+      "check_type": 0,
+      "constraint_tag": 0,
+      "template": 0,
+      "tool_set": 0
+    }
+  },
+  "script": "scripts/audit_data_diversity.py",
+  "script_version": "audit-data-diversity-v1",
+  "teacher": {
+    "by_template": {
+      "conflict": {
+        "failed_checks": {},
+        "passed": 60,
+        "rate": 1.0,
+        "total": 60
+      },
+      "constraint_edit": {
+        "failed_checks": {
+          "json_answer": 14,
+          "tools_allowed": 3
+        },
+        "passed": 25,
+        "rate": 0.625,
+        "total": 40
+      },
+      "context_recall": {
+        "failed_checks": {
+          "answer_exact": 13,
+          "tools_allowed": 1,
+          "within_steps": 5
+        },
+        "passed": 25,
+        "rate": 0.625,
+        "total": 40
+      },
+      "json_constraints": {
+        "failed_checks": {
+          "exact_keys": 1,
+          "json_valid": 1,
+          "no_fence": 1,
+          "snake_case_keys": 1,
+          "value_correct": 1
+        },
+        "passed": 39,
+        "rate": 0.975,
+        "total": 40
+      },
+      "path_params": {
+        "failed_checks": {
+          "json_valid": 9,
+          "value_correct": 9
+        },
+        "passed": 31,
+        "rate": 0.775,
+        "total": 40
+      }
+    },
+    "passed": 180,
+    "path": "D:/agent/手搓coding_agent/lite-coding-agent/private/sft_data_v2_deepseek_expanded/teacher_runs.jsonl",
+    "rate": 0.8182,
+    "sha256": "b0b2b2ee807f773a1c6ea497577ca3b9a6d745524c2746e756c98eff581baa0d",
+    "status": "ok",
+    "total": 220
+  }
+}
