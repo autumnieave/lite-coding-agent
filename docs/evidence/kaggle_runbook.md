@@ -363,3 +363,50 @@ DPO v3 不再让 kernel 重新训练 SFT，而是通过 `kernel_sources` 挂载
 （`alora_invocation_tokens`），对齐 peft 后通过；不是显存问题。smoke 1 个 optimizer
 step，全量 5 个 optimizer step，峰值 29.32 GiB。held-out baseline `40/60`、SFT
 `60/60`、SFT+DPO `60/60`，没有测到额外增量。详见 `docs/evidence/DPO结果.md`。
+
+### 15. held-out 难度筛选 kernel 启动失败（2026-10-25）
+
+新增的 difficulty-screen kernel 前两次均在模型加载后、写入任何 rollout 前失败。两次都是
+代码路径问题，不是 T4 显存、模型能力或采样结果，必须计入 GPU session 成本，但不能计入
+任务指标：
+
+| 版本 | 失败阶段 | 根因 | 处理 | 成本 |
+| --- | --- | --- | --- | --- |
+| v1 | 子进程 import | `training.build_train_v4` 在 `src` 尚未加入 `sys.path` 时导入 `agent` | 在 `training/heldout_pool.py` 导入训练 builder 前加入仓库根与 `src` | 1 个 T4 session，约 103s |
+| v2 | staging 启动 | runner 复用 `stats_pilot.run_condition`，但未提供它读取的 `args.limit` | 在 difficulty runner 中固定 `args.limit=0`，并加单测 | 1 个 T4 session，约 181s |
+| v3 | 完成 | 修复后重推，首片含 5 任务 staging；staging 5/5 `task_success`；三片 1096 + 1088 + 1088 = 3272 条 rollout | 不把基础设施失败写成通过率 | 7B 全量 12.84 GPU·h |
+
+经验规则：Kaggle 子进程的 `PYTHONPATH` 不能只设仓库根；本项目所有涉及 `agent` 的
+入口必须在导入训练 builder 前显式加入 `<repo>/src`。复用旧 runner 时必须对共享参数
+做契约测试，不能只在本地直接调用新入口。
+
+**v3 追加失败（2026-10-25 下午）**：
+
+| 版本 | 失败阶段 | 根因 | 处理 | 成本 |
+| --- | --- | --- | --- | --- |
+| shard 2 首次 | `download_model` | 模板把 `MODEL_ID` 原样写进新的 `python -c` 进程，子进程里没有该变量，`NameError` | 改为运行期 f-string 注入真实 model id | 1 个 T4 session，约 26s，0 rollout |
+| shard 0 全量 | `full_shard` 退出码 | 1 条 rollout error 使 summary=`degraded`，runner 返回 1，kernel 记为 `ERROR`；但 1096/1096 已写完 | `exit_code_for_status`：只有 `error` 返回 1；从嵌套 `difficulty/shard-00-of-03/difficulty_summary.json` 取回结果 | 无额外 session |
+| shard 2 首次 | `download_model` | 模型 id 注入修复前，子进程 `NameError` | 运行期 f-string 注入真实 model id | 1 个 T4 session，约 26 s，0 rollout |
+| shard 2 全量 | — | 修复后完成 1088/1088，`COMPLETE` | 直接取 `difficulty/shard-02-of-03/` 结果 | 3.92 GPU·h |
+
+**Kernel slug 陷阱**：`kaggle kernels push` 用 title 推导 slug。title
+`Lite Agent Held-out Difficulty Screen` 与 id `...-screen-2` 不一致时，CLI 会警告并
+把 kernel 改名成 `...-screen`，而不是推到 `...-screen-2`。重推后 title 改为
+`... Screen 2`，slug 才与 id 一致。以后 push 前先让 title slug 与 id 完全一致。
+
+### 16. 难度筛选的 session 成本与最终状态（2026-10-25）
+
+| 项目 | 值 |
+| --- | ---: |
+| 7B shard 0 | 16270.8 s（4.52 GPU·h），1096/1096，1 条 rollout error |
+| 7B shard 1 | 15851.6 s（4.40 GPU·h），1088/1088，0 error |
+| 7B shard 2 | 14112.2 s（3.92 GPU·h），1088/1088，0 error |
+| 14B preflight | 178.9 s（0.05 GPU·h），1/1 success，峰值 9.84 GB |
+| 14B 28 任务子集 | 4309.1 s（1.20 GPU·h），224 条，0 error |
+| 失败 session | v1 103 s + v2 181 s + shard 2 模型 id 26 s ≈ 0.09 GPU·h |
+| 合计 | **约 14.18 GPU·h** |
+
+最终状态：7B 官方中间态 45/409，重判口径 35；15 个训练无关 `stats-heldout-v2` 任务
+中间态为 0。14B 只在 28 个中间态子集上跑过，中间态 0、重合 0/28；最终 45 个里有
+17 个未跑 14B。所有中间态任务都与 train-v5 重叠，因此 `final-test-v3` 只能作为
+难度校准诊断集，不能支撑泛化增益结论。

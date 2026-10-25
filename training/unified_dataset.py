@@ -73,6 +73,8 @@ class UnifiedTaskSpec:
     """Optional target line override for the 03 line-edit family."""
     edit_new_token: str = ""
     """Optional replacement token override for the 03 line-edit family."""
+    public_patterns: tuple[str, ...] = ()
+    """Exact grep patterns for schema-mapped public ``public_grep`` tasks."""
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -89,6 +91,7 @@ class UnifiedTaskSpec:
             "edit_path": "",
             "edit_target_line": 0,
             "edit_new_token": "",
+            "public_patterns": (),
         }
         for key, default in defaults.items():
             if payload.get(key) == default:

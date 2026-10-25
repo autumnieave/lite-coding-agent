@@ -59,6 +59,7 @@ SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
 EMOJI = re.compile("[\U0001f000-\U0001faff\u2600-\u27bf\u2b00-\u2bff\ufe0f\u200d]")
 DEFAULT_OUT_DIR = Path("private/unified_dataset")
 DEFAULT_TRACE_DIR = Path("private/traces/unified")
+PUBLIC_GREP_FIXTURE_PATH = "project/public/knowledge.txt"
 
 CHECK_KEYWORDS: dict[str, tuple[str, ...]] = {
     "json_valid": ("合法 JSON",),
@@ -101,6 +102,7 @@ CHECK_KEYWORDS: dict[str, tuple[str, ...]] = {
     "sources_exact": ("读取",),
     "conflict_count_correct": ("冲突",),
     "no_old_read": ("_old",),
+    "matches_complete": ("matches", "pattern", "line"),
 }
 
 
@@ -608,6 +610,36 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
             source_count=13,
         )
 
+    if suffix == "public_grep":
+        patterns = tuple(str(pattern) for pattern in spec.public_patterns)
+        if not patterns:
+            raise ValueError(f"{spec.task_id} has no public grep patterns")
+        lines = [f"record-{index:03d}: {pattern}" for index, pattern in enumerate(patterns)]
+        _write(root, PUBLIC_GREP_FIXTURE_PATH, "\n".join(lines) + "\n")
+        matches = []
+        for pattern in patterns:
+            line_index = next(
+                (index for index, line in enumerate(lines) if pattern in line),
+                None,
+            )
+            if line_index is None:
+                raise ValueError(f"{spec.task_id} pattern is missing from fixture: {pattern}")
+            matches.append(
+                {
+                    "pattern": pattern,
+                    "line": (
+                        f"{PUBLIC_GREP_FIXTURE_PATH}:{line_index + 1}:"
+                        f"record-{line_index:03d}: {pattern}"
+                    ),
+                }
+            )
+        return Fixture(
+            task_id=spec.task_id,
+            kind="public_grep",
+            main_path=PUBLIC_GREP_FIXTURE_PATH,
+            expected_json={"matches": matches},
+        )
+
     raise ValueError(f"未知任务族：{spec.task_id}")
 
 
@@ -981,6 +1013,15 @@ def judge(
         )
         checks["source_count_correct"] = bool(
             isinstance(payload, dict) and payload.get("source_count") == fixture.source_count
+        )
+
+    elif suffix == "public_grep":
+        keys = collect_keys(payload)
+        checks["json_valid"] = isinstance(payload, dict)
+        checks["snake_case_keys"] = bool(keys) and all(SNAKE_CASE.fullmatch(key) for key in keys)
+        checks["no_fence"] = "```" not in reply
+        checks["matches_complete"] = bool(
+            isinstance(payload, dict) and payload == fixture.expected_json
         )
 
     else:
