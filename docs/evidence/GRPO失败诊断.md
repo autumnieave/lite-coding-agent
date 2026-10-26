@@ -1,8 +1,19 @@
 # GRPO 失败诊断
 
-**日期**：2026-10-24  
+**日期**：2026-10-24（2026-10-26 修订口径）
 **范围**：只读诊断 GRPO prompt-pool preflight v1/v2；不重推 kernel，不修改 reward 或训练代码。  
 **证据**：`private/kaggle_pull_grpo_preflight_v1/`、`private/kaggle_pull_grpo_preflight_v2/`、`docs/evidence/GRPO_prompt池方差预检.csv`、`scripts/grpo_prompt_pool.py`、`tests/test_training_reward.py`、`tests/test_reward_penalties.py`、`tests/test_reward_validation.py`。
+
+> **口径修正（2026-10-26）**：此前“组内方差为 0 / 组内方差不足”的表述不成立。
+> 计划是 100 个 prompt × 8 次采样 = **800 条 rollout**，实际产出是 **0/800**。
+> `0/800` 是 rollout 数，不是方差；0 条 rollout 不提供任何方差证据。
+> 正确口径是：**GRPO 基础设施预检未产出 rollout（v1 `ModuleNotFoundError: agent`；
+> v2 首次 403、复诊 `ERROR` 且 `failure_message` 为空），组内方差未验证**。
+> 不写“GRPO 无效”，也不写“组内方差不足”。
+>
+> **候选池来源**：v1 的 100 条来自 `train-v5` 的 468 条成功轨迹，按
+> BASE/HARD/CTX/TOOL/CONFLICT 五类做稳定哈希抽样（每类 20 条），**不是**从 45 个
+> 中间态任务中选的。中间态池 v2 见 `docs/evidence/GRPO候选池v2_中间态.md`。
 
 ## 0. 结论先行
 
@@ -10,8 +21,8 @@
 - v2 首次状态查询确实返回过 Kaggle API `403 Permission 'kernels.get' was denied`；但 2026-10-24 复诊时 status 接口已恢复，v2 当前为 **`KernelWorkerStatus.ERROR`**，`failure_message` 为空。v2 的具体内核错误仍未知，不能写成“v1 的 import 错误在 v2 复现”。
 - 账号下可读取状态的 kernel 中没有 `RUNNING`/`QUEUED`；v1/v2 都是 `ERROR`，没有证据显示 GRPO 被其他 kernel 占用 GPU 配额。
 - reward 本地回归 11/11 通过，没有发现 reward 代码 bug 证据。用户提到的 `tests/test_reward.py` 不存在。
-- 候选池有 100 条（5 类各 20），但 `grpo_prompts_filtered.jsonl` 不存在，实际 rollout 为 **0/800**；不能计算 20%–80% 过滤后数量、通过率分布或组内方差。
-- 决策：本轮不修、不重推，GRPO 保持可选分支。恢复时先修打包并重新获取有 `kernels.get` 权限的 token，最多重试一次。
+- 候选池有 100 条（5 类各 20），但 `grpo_prompts_filtered.jsonl` 不存在，实际 rollout 为 **0/800**。**0/800 是 rollout 数，不是方差**；0 条 rollout 不提供方差证据，因此不能计算 20%–80% 过滤后数量、通过率分布或组内方差。
+- 决策：上一轮不修、不重推，GRPO 保持可选分支；2026-10-26 修订口径后，预检是否重跑取决于基础设施是否修通，失败 1 次即停。恢复时先修打包并重新获取有 `kernels.get` 权限的 token，最多重试一次。
 
 ## 1. v1：`agent` import 路径错误
 
@@ -134,8 +145,9 @@ autumnsq/lite-agent-grpo-prompt-pool-preflight-v2 has status "KernelWorkerStatus
 | 行数 | 100 |
 | BASE / HARD / CTX / TOOL / CONFLICT | 20 / 20 / 20 / 20 / 20 |
 | SHA-256 | `d73daddbc69f8c9745ae03365d5710c595e0fc64686ecac7c03a2e7404c10674` |
+| 来源 | `train-v5` 468 条按类别稳定哈希抽样；**不是** 45 个中间态任务 |
 | `run_status` | 全部 `not_run_kaggle_403` |
-| 实际 rollout | 0/800（100 prompt x 8） |
+| 实际 rollout | 0/800（100 prompt × 8；这是 rollout 数，不是方差） |
 
 仓库中不存在 `grpo_prompts_filtered.jsonl`。本轮**没有生成过滤后池**，原因是：
 
@@ -143,12 +155,12 @@ autumnsq/lite-agent-grpo-prompt-pool-preflight-v2 has status "KernelWorkerStatus
 2. 用户明确要求本轮不修 GRPO 打包、不修 token 权限、不重推 kernel；
 3. 本地只有 MX250 2GB，不能运行 7B 采样，无法用本地结果替代 Kaggle rollout。
 
-因此本节的结论是“**过滤后池未生成、通过率分布未验证、组内方差未验证**”，而不是“过滤后池不足”：
+因此本节的结论是“**过滤后池未生成、通过率分布未验证、组内方差未验证**”，而不是“过滤后池不足”或“组内方差为 0”：
 
 | 项目 | 结果 |
 | --- | --- |
 | 候选池 | 100 条，5 类各 20 |
-| 实际 rollout | 0/800 |
+| 实际 rollout | 0/800（rollout 数，不是方差） |
 | 过滤后 20%–80% prompt 数 | 未验证 |
 | 通过率分布 / reward variance | 未验证 |
 | `grpo_prompts_filtered.jsonl` | 未生成 |
@@ -162,7 +174,7 @@ autumnsq/lite-agent-grpo-prompt-pool-preflight-v2 has status "KernelWorkerStatus
 | 本轮 GRPO | **不修、不重推** | 0 rollout，且 v2 具体错误未取得；继续重推只会消耗 GPU session |
 | GRPO 定位 | **可选分支，不启动** | reward 回归通过，但过滤后池和组内方差未验证，不能进入训练主线 |
 | 未来恢复 | 最多重试一次 | 先确认打包包含 `src` 的 `sys.path`，再获取有 `kernels.get` 权限的 Kaggle token；仍失败就停止 |
-| 结果口径 | **未验证** | 不写“GRPO 无效”，也不写“组内方差不足” |
+| 结果口径 | **未验证** | 0/800 是 rollout 数，不是方差；0 条 rollout 不提供方差证据；不写“GRPO 无效”，也不写“组内方差不足” |
 
 恢复前的检查清单：
 
@@ -172,7 +184,26 @@ autumnsq/lite-agent-grpo-prompt-pool-preflight-v2 has status "KernelWorkerStatus
 4. 只有拿到 ≥50 条 20%–80% prompt，才进入 GRPO 训练分支；
 5. 若再失败，保持“GRPO 可选、未验证”，不继续消耗 session。
 
-## 7. 成本与边界
+## 7. 2026-10-26 口径修正与后续
+
+- **修正内容**：删除“组内方差为 0 / 组内方差不足”的错误口径。实际是计划 800 条
+  rollout、产出 0 条；`0/800` 是 rollout 数，不是方差。0 条 rollout 不能用来推断
+  方差为 0，也不能用来判断 GRPO 是否有效。
+- **基础设施状态**：v1 是 `ModuleNotFoundError: agent` 的打包/路径问题；v2 首次状态
+  查询 403，复诊为 `ERROR` 且 `failure_message` 为空，输出目录没有 `summary.json`
+  或 `runs.jsonl`。因此正确表述是“基础设施预检未产出 rollout，组内方差未验证”。
+- **候选池 v1 审计**：100 条来自 train-v5 468 条的分层稳定哈希，不是 45 个中间态
+  任务。v1 池不能回答“中间态任务上是否有组内方差”。
+- **候选池 v2**：改用 45 个 baseline 通过率 37.5%–62.5% 的中间态任务，冻结
+  `task_ids.jsonl` / `prompts.jsonl` / manifest，SHA 见
+  `docs/evidence/GRPO候选池v2_中间态.md`。
+- **预检决策**：时间限制，只修正口径，预检未做；不跑全量 GRPO。Kaggle status API
+  已恢复（不再 403），但旧 v2 kernel 仍是 ERROR，且仓库没有 v2 中间态 full-loop
+  kernel builder。若后续重跑，选 20–30 条中间态任务 ×8 rollout；失败 1 次即停；
+  ≥30% 的 prompt 有组内方差才写“预检通过”，否则写“实测组内方差稀疏（X/N），
+  GRPO 不启动”。没有实测数字时写“未验证”，不写“方差为 0”。
+
+## 8. 成本与边界
 
 - v1：83.4s，其中模型下载 73.4s，脚本 0.2s；没有 rollout；
 - v2：至少一次推送并产生 `lastRunTime`；是否实际占用 GPU、占用多久，无法从输出确认；不伪造耗时或 rollout；

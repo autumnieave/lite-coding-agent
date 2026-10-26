@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
-from scripts.grpo_prompt_pool import completion_matches, score_completion, select_prompt_pool
+import asyncio
+from pathlib import Path
+
+import pytest
+
+from scripts.grpo_prompt_pool import (
+    _variance,
+    _variance_status,
+    completion_matches,
+    run_pool,
+    score_completion,
+    select_prompt_pool,
+)
 
 
 def _row(index: int, category: str, *, completion: str = "CTX-1", expects_json: bool = False):
@@ -62,3 +74,37 @@ def test_wrong_token_gets_zero_pool_reward_even_if_reward_shape_is_valid() -> No
     scored = score_completion(row, "CTX-2")
     assert scored["task_success"] is False
     assert scored["pool_reward"] == 0.0
+
+
+def test_empty_rollout_list_is_not_measured_not_zero_variance() -> None:
+    assert _variance([]) is None
+    assert _variance_status([]) == "not_measured"
+
+
+def test_measured_all_zero_rewards_report_zero_variance() -> None:
+    assert _variance([0.0, 0.0, 0.0]) == 0.0
+    assert _variance_status([0.0, 0.0, 0.0]) == "measured_zero"
+
+
+def test_measured_mixed_rewards_report_positive_variance() -> None:
+    variance = _variance([0.0, 1.0, 1.0, 1.0])
+    assert variance is not None
+    assert variance > 0.0
+    assert _variance_status([0.0, 1.0, 1.0, 1.0]) == "measured_positive"
+
+
+def test_run_pool_rejects_zero_rollouts_before_reading_data(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="zero rollouts is not variance evidence"):
+        asyncio.run(
+            run_pool(
+                train_file=tmp_path / "missing.jsonl",
+                out_dir=tmp_path / "out",
+                provider=object(),
+                model_label="test",
+                rollouts=0,
+                per_category=1,
+                temperature=0.8,
+                seed=1,
+                max_new_tokens=1,
+            )
+        )

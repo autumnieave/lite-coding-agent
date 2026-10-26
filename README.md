@@ -291,7 +291,9 @@ lite-coding-agent/
 - [x] 数据配比对照（+15% Dolly 仍 50/60；CTX-HARD 0/10 且 0 次工具调用）
 - [x] DPO 对照（96GB RTX PRO 6000：smoke 与全量跑通；SFT `60/60` → SFT+DPO `60/60`，无额外增量）
 - [ ] lr/rank 与 DRIFT-Bench（未跑；不写结果）
-- [ ] GRPO（仅在 SFT 结果与 reward 能惩罚步数循环后再评估）
+- [ ] GRPO（基础设施预检未产出 rollout：v1 `ModuleNotFoundError: agent`，v2 首次 403、
+  复诊 ERROR；计划 800 条、实际 0/800。`0/800` 是 rollout 数，不是方差；组内方差
+  未验证，不写“GRPO 无效”或“组内方差不足”）
 - [ ] Kaggle T4：Outlines constrained decoding baseline（v1 路径 ERROR、v2 bitsandbytes ERROR、v3 取消、v4 加载超时；0 条结果，无指标）
 
 ## 评测
@@ -383,8 +385,9 @@ S0 的 10 次步数失败集中在 `U-FT01-BASE`（重复 `read_file` 6 轮）�
   `A-C1-HARD` 新增 10/10 步数循环。7B v5 曾严重退化（40/60 → 20/60，BASE 20/30 → 0/30），
   但 v9 修复训练/推理模板并保留 3072 序列长度后恢复到 60/60（BASE/HARD 均 30/30，valid
   stable 4 → 0）；1.5B 循环未在 7B 复现。结论只支持“模板一致性是数据管线关键门禁”，
-  不支持“训练普遍有效”；GRPO 暂缓（Kaggle preflight 0/800 rollout，过滤后池与组内方差未验证，
-  reward 惩罚项已有测试）。
+  不支持“训练普遍有效”；GRPO 暂缓（Kaggle preflight 实际 0/800 rollout；`0/800` 是
+  rollout 数，不是方差，0 条 rollout 不提供方差证据；过滤后池与组内方差未验证，
+  reward 惩罚项已有测试）。不写“GRPO 无效”，也不写“组内方差不足”。
   constrained decoding v1/v2 因路径/依赖 `ERROR`，v3 取消，v4 在权重加载阶段超时，0 条结果。
   工具结果按调用计 90/90 → 250/250 全成功，但调用总数从 90 涨到 250，不能把“每次调用合法”
   写成效率提升。
@@ -393,7 +396,7 @@ S0 的 10 次步数失败集中在 `U-FT01-BASE`（重复 `read_file` 6 轮）�
 - **MCP 只支持 stdio**：没有 SSE / OAuth / 动态工具刷新 / 连接重试。
 - **执行层约束校验只看工具名、不看参数**：拦不住「用 echo 工具把 Key 回显出来」这类（ADR-018）。
 - **退出时的上游 traceback**：`httpcore2` 关闭流的缺陷，不影响退出码、stdout 与文件改动（ADR-007）。
-- **MCP 端到端用例在高负载下偶发失败**：`tests/test_mcp_cli.py` 会真的拉起子进程，已标 `slow`、CI 单独 job 跑；本地 `pytest -q -m "not slow" -k "not mcp"` 当前 743 passed + 1 skipped。
+- **MCP 端到端用例在高负载下偶发失败**：`tests/test_mcp_cli.py` 会真的拉起子进程，已标 `slow`、CI 单独 job 跑；本地 `pytest -q -m "not slow" -k "not mcp"` 当前 812 passed + 1 skipped。
 
 ## Related Work：为什么选 constrained decoding
 

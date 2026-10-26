@@ -129,11 +129,17 @@ def score_completion(
     }
 
 
-def _variance(values: Sequence[float]) -> float:
+def _variance(values: Sequence[float]) -> float | None:
     if not values:
-        return 0.0
+        return None
     mean = sum(values) / len(values)
     return sum((value - mean) ** 2 for value in values) / len(values)
+
+
+def _variance_status(values: Sequence[float]) -> str:
+    if not values:
+        return "not_measured"
+    return "measured_zero" if _variance(values) == 0.0 else "measured_positive"
 
 
 def _percentile(values: Sequence[float], fraction: float) -> float:
@@ -157,6 +163,8 @@ async def run_pool(
     max_new_tokens: int,
     limit: int = 0,
 ) -> dict[str, Any]:
+    if rollouts < 1:
+        raise ValueError("rollouts must be >= 1; zero rollouts is not variance evidence")
     rows = select_prompt_pool(_load_jsonl(train_file), per_category=per_category, seed=seed)
     if limit:
         rows = rows[:limit]
@@ -206,6 +214,7 @@ async def run_pool(
         successes = sum(bool(sample["task_success"]) for sample in samples)
         pass_rate = successes / rollouts
         reward_values = [float(sample["pool_reward"]) for sample in samples]
+        reward_variance = _variance(reward_values)
         prompt_stats.append(
             {
                 "task_id": task_id,
@@ -215,7 +224,8 @@ async def run_pool(
                 "successes": successes,
                 "pass_rate": round(pass_rate, 4),
                 "reward_mean": round(sum(reward_values) / rollouts, 4),
-                "reward_variance": round(_variance(reward_values), 6),
+                "reward_variance": None if reward_variance is None else round(reward_variance, 6),
+                "variance_status": _variance_status(reward_values),
                 "in_20_80": 0.2 <= pass_rate <= 0.8,
             }
         )
@@ -225,7 +235,10 @@ async def run_pool(
             flush=True,
         )
     eligible = [row for row in prompt_stats if row["in_20_80"]]
-    reward_nonzero = [row for row in prompt_stats if row["reward_variance"] > 0]
+    measured = bool(prompt_stats) and all(
+        row["variance_status"] != "not_measured" for row in prompt_stats
+    )
+    reward_nonzero = [row for row in prompt_stats if (row["reward_variance"] or 0.0) > 0]
     summary = {
         "status": "completed",
         "protocol": "final-turn resampling on frozen successful train-v5 trajectories",
@@ -242,19 +255,33 @@ async def run_pool(
         "seed": seed,
         "max_new_tokens": max_new_tokens,
         "selected_prompts": len(prompt_stats),
+        "measurement_status": "measured" if measured else "not_measured",
         "category_counts": dict(Counter(row["category"] for row in prompt_stats)),
-        "eligible_20_80": len(eligible),
-        "reward_variance_positive": len(reward_nonzero),
+        "eligible_20_80": len(eligible) if measured else None,
+        "reward_variance_positive": len(reward_nonzero) if measured else None,
+        "variance_note": (
+            "0 条 rollout 不提供方差证据；组内方差未验证"
+            if not measured
+            else "reward_variance 只在有有效 rollout 时计算；0 表示实测全 0/全 1"
+        ),
         "pass_rate_distribution": {
             "min": min((row["pass_rate"] for row in prompt_stats), default=0.0),
             "p50": round(_percentile([row["pass_rate"] for row in prompt_stats], 0.5), 4),
             "max": max((row["pass_rate"] for row in prompt_stats), default=0.0),
         },
-        "grpo_branch": "candidate" if len(eligible) >= 50 else "insufficient_pool",
+        "grpo_branch": (
+            "not_measured"
+            if not measured
+            else ("candidate" if len(eligible) >= 50 else "insufficient_pool")
+        ),
         "grpo_note": (
-            "prompt pool >=50 with 20-80% pass rate"
-            if len(eligible) >= 50
-            else "GRPO prompt 池不足，组内方差信号稀疏；GRPO 降级为可选"
+            "0 条 rollout 不提供方差证据；组内方差未验证，GRPO 暂缓"
+            if not measured
+            else (
+                "prompt pool >=50 with 20-80% pass rate"
+                if len(eligible) >= 50
+                else f"过滤后池不足（{len(eligible)}/{len(prompt_stats)} 在 20–80%）；GRPO 暂不启动"
+            )
         ),
         "prompts": prompt_stats,
     }
@@ -275,6 +302,7 @@ def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
         "pass_rate",
         "reward_mean",
         "reward_variance",
+        "variance_status",
         "in_20_80",
     )
     lines = [",".join(fields)]
