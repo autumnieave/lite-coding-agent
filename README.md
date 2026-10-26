@@ -1,36 +1,23 @@
 # Agent 约束遵守：违反归因、可复现评测与训练侧能力边界验证
 
-> 基于从零实现的终端 Coding Agent，不依赖 LangChain 等 Agent 框架。核心问题不是“再做一个 Agent”，
-> 而是：长任务里的关键约束为什么会丢、怎么把“为什么”变成可复现的 trace 与可证伪的归因。
+## Coding Agent 项目经历
 
-**当前状态**：Agent Loop + 6 个内置工具 + 四层上下文压缩 + 关键约束保留 + 记忆/checkpoint/MCP
-均已跑通。诊断侧的阶段 A 主样本 `stable=0`；方向 C 手工自检检查级 `0/40` vs 基线 `4/40`、
-rollout 级 `0/20` vs `2/20`，Fisher `p>0.05`；受控冲突 4 组 × 5 次，强冲突 5/5 识别
-`unresolved_conflict`，但 0/5 格式失败。统一数据集 pilot 与 final-test-v2 的 S0/S1 结果
-见 `## 评测`：S0 110 条 0 error、19 个原始 stable / 15 个 valid stable（6 任务），S1
-24/20、task_success 10/110，是负收益，按预注册门禁不工程化。
+终端 Coding Agent：长任务约束遵循与后训练可靠性验证 | 个人项目
+github.com/autumnieave/lite-coding-agent
 
-训练侧（`training/`，主线之一）在 Kaggle T4 完成 7B QLoRA 方法对照。train-v4 380/80
-冻结，tokenizer 门禁后 361/74、90 optimizer step；6 个行为 held-out 任务 × 10 rollout：
-baseline `40/60`、full-loss SFT `50/60`（BASE `30/30`、HARD `20/30`、CTX-HARD
-`10/10 → 0/10`）、assistant-only SFT `60/60`（BASE/HARD `30/30`、CTX-HARD 恢复
-`10/10`）、+15% Dolly 仍 `50/60` 且 CTX-HARD `0/10`、0 次工具调用。DPO v3 在 T4
-reference precompute OOM；96GB RTX PRO 6000 上 smoke 与全量均跑通（5 个 optimizer
-step），held-out baseline `40/60`、SFT `60/60`、SFT+DPO `60/60`，在这批已饱和任务上
-没有测到 DPO 额外收益，详见 `docs/evidence/DPO结果.md`。1.5B 是能力边界探针（89 条数据 SFT `20/60`，
-HARD `10/30`，但 A-C1-HARD 出现 10/10 重复读循环）；7B v9 的 `60/60` 是模板修复后的
-管线验证，不是方法增益。
+项目概述：针对长任务中上下文压缩静默丢失约束、且“约束在上下文≠模型遵守”的痛点，从零构建终端 Coding Agent 实验平台，按 Harness 分层验证（约束→工具→评测→训练→决策）组织，核心方法论为“存在≠生效”——每层只证明本层能证明的事，不跳层外推。验证规模：409 任务池、3,272 条 baseline rollout、450 对配对统计。
 
-根因侧：训练/推理 chat template 未传 `tools=` 时，同一轨迹训练渲染 307 token、推理
-1567 token；修复后 BASE 从 `0/30` 恢复。loss masking 是另一个已定位变量：full-loss 的
-CTX 退化在 assistant-only 下消失；+15% 通用数据没有复现收益。两 seed 的 task_success
-完全一致，stable 2→3 波动 1 项；只有 6 任务、2 seed，不报置信区间。
+技术栈：后训练（SFT/QLoRA/Loss Masking）· 评测（Trace/pass^k/McNemar/预注册门禁）· Agent（Harness Engineering/Guardrails/MCP/Context Engineering）· 工程（vLLM/pytest 857/CI）
 
-constrained decoding 在 Kaggle 仍 0 rollout（v1 路径 ERROR、v2 依赖 ERROR、v3 取消、
-v4 加载超时），S2 保持“预注册、0 rollout”。修正后的原 benchmark 只作为历史回归基线，
-不进入训练集。项目定位是**违反归因 + 可复现评测 + 训练侧能力边界验证**，`training/`
-不是工程储备，是主线之一。
+约束层（Guardrails + Context Engineering）：原文在 ≠ 语义在 ≠ 行为生效。自研约束独立存储 + 双通道注入 + ID 补录，压力档下违规 19→5 次、原文保留 69%→95%；分层诊断发现补录仅验 ID 不验正文，7B untagged 场景下行为规则出现选择性丢失（3/8 vs 8/8），定位双重校验为修复方向。
 
+工具层（Harness Engineering）：能调用 ≠ 调用可靠。从零实现 Agent Loop + 6 工具与手写 stdio MCP 客户端（无 SDK），实现协议错误分离与幂等键防重复；Token 追踪定位工具返回占 69.9%，成本重心在运行时。取舍：单进程 stdio-only，未覆盖异步与崩溃恢复。
+
+评测层（Trace 探针）：模型能跑 ≠ 结果可信。全链路 Trace 发现 temperature=0 下仍有 3.57% 判定翻转率（560 配对观测），引入 pass^k 门禁；在去重叠的 45 个任务上，SFT 提升 +50.3pp，重叠/非重叠增益一致，排除逐字记忆。
+
+训练层（SFT 归因）：能训 ≠ 训对了。7B SFT 首跑全灭 → Trace 定位模板不一致 → 修复后 30/30；消融证明 full-loss 崩溃、Loss Masking 恢复 10/10。API vs 本地：严格契约下 99.8% vs 90.9%（去 fence 后对齐，优势在格式可靠性）。增益具条件性，不作泛化声称。
+
+决策层（Agentic RL 预检）：有信号 ≠ 该投入。GRPO 预检 45 任务中 44 个 8/8 饱和、中间态 0 个，判断当前不该做 RL（而非做不到）；配合扩数据无增量、DPO 饱和的负结果链，负结果与正结果并列报告。
 
 ## 为什么做
 
@@ -292,9 +279,9 @@ lite-coding-agent/
 - [x] 数据配比对照（+15% Dolly 仍 50/60；CTX-HARD 0/10 且 0 次工具调用）
 - [x] DPO 对照（96GB RTX PRO 6000：smoke 与全量跑通；SFT `60/60` → SFT+DPO `60/60`，无额外增量）
 - [ ] lr/rank 与 DRIFT-Bench（未跑；不写结果）
-- [x] GRPO 组内方差预检（v2 中间态池 20 × 8 = 160 条；160/160 成功、0 error；
-  0/20 prompt 有正方差 → 实测稀疏，全量 GRPO 不启动。20/20 与训练集重叠，不是
-  clean held-out；不写“GRPO 无效”）
+- [x] GRPO 预检（45 任务各 8 rollout；44 个 8/8、1 个 7/8、中间态 0 →
+  SFT 饱和，全量 GRPO 不启动。45/45 与训练集重叠，不是 clean held-out；
+  不写“GRPO 无效”）
 - [ ] Kaggle T4：Outlines constrained decoding baseline（v1 路径 ERROR、v2 bitsandbytes ERROR、v3 取消、v4 加载超时；0 条结果，无指标）
 
 ## 评测
@@ -386,11 +373,10 @@ S0 的 10 次步数失败集中在 `U-FT01-BASE`（重复 `read_file` 6 轮）�
   `A-C1-HARD` 新增 10/10 步数循环。7B v5 曾严重退化（40/60 → 20/60，BASE 20/30 → 0/30），
   但 v9 修复训练/推理模板并保留 3072 序列长度后恢复到 60/60（BASE/HARD 均 30/30，valid
   stable 4 → 0）；1.5B 循环未在 7B 复现。结论只支持“模板一致性是数据管线关键门禁”，
-  不支持“训练普遍有效”。GRPO 已完成一次 v2 中间态池预检：20 prompt × 8 = 160 条，
-  160/160 成功、0 error，20 个 prompt 都是 8/8，实测 `measured_positive=0/20`，
-  判定“组内方差稀疏，GRPO 不启动”。20/20 任务与训练集重叠，零方差更符合训练覆盖后
-  的饱和，不是 clean held-out，也不能写“GRPO 无效”。历史上的 `0/800` 是 rollout
-  数，不是方差。
+  不支持“训练普遍有效”。GRPO 的正确预检是用 SFT 模型对 45 任务各跑 8 rollout：
+  44 个 8/8、1 个 7/8，中间态 0，判定 SFT 饱和、GRPO 不该做。45/45 任务与训练集
+  重叠，不是 clean held-out，也不能写“GRPO 无效”。历史上的 `0/800` 是 rollout
+  数，不是方差。旧 20 任务子集只作历史。
   constrained decoding v1/v2 因路径/依赖 `ERROR`，v3 取消，v4 在权重加载阶段超时，0 条结果。
   工具结果按调用计 90/90 → 250/250 全成功，但调用总数从 90 涨到 250，不能把“每次调用合法”
   写成效率提升。

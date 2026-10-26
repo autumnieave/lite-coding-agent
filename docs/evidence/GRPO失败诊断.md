@@ -1,5 +1,11 @@
 # GRPO 失败诊断
 
+> **最新口径（2026-10-26）**：45 任务正确预检已经执行：44 个 8/8、1 个 7/8、中间态 0，
+> 结论是 SFT 饱和、GRPO 不该做。本文记录的是旧 20 任务子集预检，只能作历史对照；
+> 不能替代 45 任务口径，也不写“GRPO 组内方差为 0”。最新结果见
+> `docs/evidence/GRPO正确预检.md`。
+
+
 **日期**：2026-10-24（2026-10-26 修订口径）
 **范围**：只读诊断 GRPO prompt-pool preflight v1/v2；不重推 kernel，不修改 reward 或训练代码。  
 **证据**：`private/kaggle_pull_grpo_preflight_v1/`、`private/kaggle_pull_grpo_preflight_v2/`、`docs/evidence/GRPO_prompt池方差预检.csv`、`scripts/grpo_prompt_pool.py`、`tests/test_training_reward.py`、`tests/test_reward_penalties.py`、`tests/test_reward_validation.py`。
@@ -16,7 +22,7 @@
 > 中间态任务中选的。中间态池 v2 见 `docs/evidence/GRPO候选池v2_中间态.md`。
 >
 > **2026-10-26 补充**：v2 中间态池的 full-loop 预检已执行完成（20 prompt × 8
-> rollout），实测 160/160 成功、0 个 prompt 有正方差，判定组内方差稀疏、GRPO 不
+> rollout），实测 160/160 成功、0 个 prompt 有正方差，判定 20/20 饱和、GRPO 不
 > 启动；详见第 9 节和 `docs/evidence/GRPO预检结果.md`。此前“组内方差未验证”只适用于
 > 旧的 v1/v2 基础设施失败阶段，不再是当前状态。
 
@@ -179,7 +185,7 @@ autumnsq/lite-agent-grpo-prompt-pool-preflight-v2 has status "KernelWorkerStatus
 | 本轮 GRPO | **不修、不重推** | 0 rollout，且 v2 具体错误未取得；继续重推只会消耗 GPU session |
 | GRPO 定位 | **可选分支，不启动** | reward 回归通过；当时过滤后池和组内方差未验证。最新 v2 预检为 0/20 正方差，仍不启动（第 9 节） |
 | 未来恢复 | 最多重试一次 | 先确认打包包含 `src` 的 `sys.path`，再获取有 `kernels.get` 权限的 Kaggle token；仍失败就停止 |
-| 结果口径 | **旧状态未验证；最新已实测** | 旧 0/800 是 rollout 数，不是方差；最新 v2 预检 160 条实测零方差（第 9 节）；不写“GRPO 无效” |
+| 结果口径 | **旧状态未验证；最新已实测** | 旧 0/800 是 rollout 数，不是方差；最新 v2 预检 160 条实测 20/20 饱和（第 9 节）；不写“GRPO 无效” |
 
 恢复前的检查清单：
 
@@ -242,10 +248,10 @@ autumnsq/lite-agent-grpo-prompt-pool-preflight-v2 has status "KernelWorkerStatus
 | not_measured | 0/20 |
 | verdict | `sparse` |
 
-20 个 prompt 全部 8/8，样本方差均为 0；staging（1 × 8）也是 8/8、0 error。按预注册
+20 个 prompt 全部 8/8，20/20 饱和、没有中间态；staging（1 × 8）也是 8/8、0 error。按预注册
 `>=30%` 门槛，结论是 **“实测组内方差稀疏（0/20），GRPO 不启动”**。这与此前
 `0/800 rollout` 不是同一件事：`0/800` 是 rollout 数，不能当方差；本次是 160 条真实
-rollout 测到的零方差。
+rollout 测到的 20/20 饱和；不作为 45 任务池的方差结论。
 
 边界：20 个任务全部 `training_overlap=true`，SFT 后 8/8 更符合训练覆盖后的拟合；
 不是 clean held-out，也不是跨模板泛化。未训练 GRPO，不能写“GRPO 无效”。详见
