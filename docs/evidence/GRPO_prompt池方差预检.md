@@ -12,6 +12,11 @@
 > **“GRPO 基础设施预检未产出 rollout（v1 `ModuleNotFoundError: agent`；v2 首次 403、
 > 复诊 ERROR），组内方差未验证”**。不写“组内方差为 0”，不写“组内方差不足”，
 > 也不写“GRPO 无效”。
+>
+> **后续（2026-10-26）**：v2 中间态池的 full-loop 预检已完成：20 prompt × 8
+> rollout = 160 条，160/160 成功、0 error，0/20 prompt 有正方差，判定“实测组内方差
+> 稀疏，GRPO 不启动”。本文件保留 v1 的协议与失败历史；最新结果见
+> `docs/evidence/GRPO预检结果.md`。
 
 ## 1. 预检协议
 

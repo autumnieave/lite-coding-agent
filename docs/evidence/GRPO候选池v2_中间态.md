@@ -3,7 +3,8 @@
 **日期**：2026-10-26
 **目的**：修正“GRPO 组内方差为 0”的口径，并把候选池从 v1 的 train-v5 全量分层抽样
 改为 baseline 通过率落在 30%–70% 的中间态任务。
-**状态**：池子已冻结；**时间限制，只修正口径，预检未做**。
+**状态**：池子已冻结；2026-10-26 已完成 20 条 × 8 rollout 的 full-loop 预检，
+结论见 `docs/evidence/GRPO预检结果.md`。
 
 ## 1. 为什么换池
 
@@ -61,18 +62,22 @@ held-out 证据。
   --out-dir private/grpo_middle_pool
 ```
 
-## 5. 预检状态与判定口径
+## 5. 预检结果（2026-10-26）
 
-- **本轮未跑预检（时间限制，只修正口径，预检未做）**：只修口径、确认 v1 池来源、
-  冻结 v2 池；没有 7B SFT rollout。
-- **基础设施现状**：Kaggle status API 已恢复（不再 403），但旧 v2 kernel 仍是
-  `KernelWorkerStatus.ERROR`；仓库没有 v2 中间态 full-loop 的 kernel builder，
-  重跑需要新 builder 和 adapter 挂载，未在本轮时间盒内执行。
-- 如果后续跑：从 45 条中选 20–30 条，每条 8 rollout；失败 1 次即停。
-- 判定：每个 prompt 的 8 个二值 reward 中，方差 > 0 记为“有组内方差”。
-  `>=30%` 的 prompt 有组内方差 → “预检通过，组内方差信号存在”；`<30%` →
-  “实测组内方差稀疏（X/N），GRPO 不启动”。
-- **没有 rollout 时**：写“组内方差未验证”，不写“方差为 0”，也不写“组内方差不足”。
+- **执行**：从 45 条中按类别比例选 20 条（BASE 6 / HARD 4 / TOOL 10），每条
+  8 rollout；`temperature=0.7`、`top_p=0.9`、`seed=20261019+rollout`、
+  `max_model_len=8192`、`max_tokens=512`，full-loop。
+- **staging**：1 prompt × 8 rollout，8/8 成功、0 error，144.7s。
+- **full**：20 × 8 = 160 条全部完整，`task_success=160/160`、`errors=0`；
+  20 个 prompt 都是 8/8。
+- **方差**：`measured_positive=0/20`、`measured_zero=20/20`、
+  `not_measured=0/20`，正方差比例 0.0%。按预注册 `>=30%` 门槛，判定
+  **“实测组内方差稀疏（0/20），GRPO 不启动”**。
+- **解释**：20/20 任务与训练集重叠；baseline 的 37.5%–62.5% 中间态在 train-v5
+  assistant-only SFT 后变成 8/8，符合训练覆盖后的拟合，不能写成泛化。零方差是
+  实测结果，不是“未验证”；但本轮没有训练 GRPO，不能写“GRPO 无效”。
+- **产物**：`docs/evidence/GRPO预检结果.md`；raw runs 与 summary 在
+  `private/kaggle_pull_grpo_preflight_v3/`（本地，不入 Git）。
 
 ## 6. 相关文档
 

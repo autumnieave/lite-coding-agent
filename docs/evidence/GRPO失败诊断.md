@@ -14,6 +14,11 @@
 > **候选池来源**：v1 的 100 条来自 `train-v5` 的 468 条成功轨迹，按
 > BASE/HARD/CTX/TOOL/CONFLICT 五类做稳定哈希抽样（每类 20 条），**不是**从 45 个
 > 中间态任务中选的。中间态池 v2 见 `docs/evidence/GRPO候选池v2_中间态.md`。
+>
+> **2026-10-26 补充**：v2 中间态池的 full-loop 预检已执行完成（20 prompt × 8
+> rollout），实测 160/160 成功、0 个 prompt 有正方差，判定组内方差稀疏、GRPO 不
+> 启动；详见第 9 节和 `docs/evidence/GRPO预检结果.md`。此前“组内方差未验证”只适用于
+> 旧的 v1/v2 基础设施失败阶段，不再是当前状态。
 
 ## 0. 结论先行
 
@@ -172,9 +177,9 @@ autumnsq/lite-agent-grpo-prompt-pool-preflight-v2 has status "KernelWorkerStatus
 | 分支 | 决策 | 理由 |
 | --- | --- | --- |
 | 本轮 GRPO | **不修、不重推** | 0 rollout，且 v2 具体错误未取得；继续重推只会消耗 GPU session |
-| GRPO 定位 | **可选分支，不启动** | reward 回归通过，但过滤后池和组内方差未验证，不能进入训练主线 |
+| GRPO 定位 | **可选分支，不启动** | reward 回归通过；当时过滤后池和组内方差未验证。最新 v2 预检为 0/20 正方差，仍不启动（第 9 节） |
 | 未来恢复 | 最多重试一次 | 先确认打包包含 `src` 的 `sys.path`，再获取有 `kernels.get` 权限的 Kaggle token；仍失败就停止 |
-| 结果口径 | **未验证** | 0/800 是 rollout 数，不是方差；0 条 rollout 不提供方差证据；不写“GRPO 无效”，也不写“组内方差不足” |
+| 结果口径 | **旧状态未验证；最新已实测** | 旧 0/800 是 rollout 数，不是方差；最新 v2 预检 160 条实测零方差（第 9 节）；不写“GRPO 无效” |
 
 恢复前的检查清单：
 
@@ -208,5 +213,42 @@ autumnsq/lite-agent-grpo-prompt-pool-preflight-v2 has status "KernelWorkerStatus
 - v1：83.4s，其中模型下载 73.4s，脚本 0.2s；没有 rollout；
 - v2：至少一次推送并产生 `lastRunTime`；是否实际占用 GPU、占用多久，无法从输出确认；不伪造耗时或 rollout；
 - 本文只读诊断，没有重推 kernel，没有修改 `core/loop.py`、`compaction.py`、`constraints.py`，没有修改 reward 逻辑。
+
+## 9. 2026-10-26 v2 中间态池预检实测
+
+**Kernel**：`autumnsq/lite-agent-grpo-preflight-v3`（version 1，`COMPLETE`）  
+**硬件**：Tesla T4 14.56 GB；总耗时 2509.9 s（0.70 GPU·h，Kaggle 免费额度）。
+
+修复与执行：
+
+- 新 builder 把 `src/` 和仓库根目录同时加入 `PYTHONPATH`，`ModuleNotFoundError:
+  agent` 消失；
+- adapter 从 `autumnsq/lite-agent-method-assistant-train-v5` 挂载，SHA-256
+  `f5b685d4...9fea7` 校验通过；
+- 之前 PATH 上的 Kaggle CLI 1.7.4.5 不认识 `KGAT` token，状态查询 403；改用仓库
+  `.venv` 的 Kaggle CLI 2.2.4 后鉴权正常。该 403 是 CLI/凭据格式问题，不是 kernel
+  权限或 GPU 配额问题。
+
+结果：
+
+| 项目 | 值 |
+| --- | ---: |
+| prompt | 20（BASE 6 / HARD 4 / TOOL 10） |
+| rollout | 160（20 × 8） |
+| valid / errors | 160 / 0 |
+| task_success | 160/160 |
+| measured_positive | 0/20 |
+| measured_zero | 20/20 |
+| not_measured | 0/20 |
+| verdict | `sparse` |
+
+20 个 prompt 全部 8/8，样本方差均为 0；staging（1 × 8）也是 8/8、0 error。按预注册
+`>=30%` 门槛，结论是 **“实测组内方差稀疏（0/20），GRPO 不启动”**。这与此前
+`0/800 rollout` 不是同一件事：`0/800` 是 rollout 数，不能当方差；本次是 160 条真实
+rollout 测到的零方差。
+
+边界：20 个任务全部 `training_overlap=true`，SFT 后 8/8 更符合训练覆盖后的拟合；
+不是 clean held-out，也不是跨模板泛化。未训练 GRPO，不能写“GRPO 无效”。详见
+`docs/evidence/GRPO预检结果.md`。
 
 **相关文档**：`docs/evidence/GRPO_prompt池方差预检.md`、`docs/evidence/GRPO_prompt池方差预检.csv`、`docs/plan/训练侧执行计划.md`。
