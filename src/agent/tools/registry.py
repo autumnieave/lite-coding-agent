@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable
 
 from agent.tools.base import ToolLike, ToolResult
@@ -19,6 +20,7 @@ class ToolRegistry:
 
     def __init__(self, tools: Iterable[ToolLike] = ()) -> None:
         self._tools: dict[str, ToolLike] = {}
+        self._idempotency_cache: dict[str, ToolResult] = {}
         for tool in tools:
             self.register(tool)
 
@@ -41,8 +43,13 @@ class ToolRegistry:
         """按名称排序返回全部工具定义，顺序稳定便于测试与缓存。"""
         return [self._tools[name].spec() for name in self.names]
 
-    async def execute(self, name: str, arguments: str) -> ToolResult:
-        """执行指定工具。未知工具名返回失败结果，不抛异常。"""
+    async def execute(self, name: str, arguments: str, *, task_id: str | None = None) -> ToolResult:
+        """执行指定工具。未知工具名返回失败结果，不抛异常。
+
+        传入 ``task_id`` 时启用本注册表内的幂等缓存：同一任务、同一工具、
+        同一原始参数只真正执行一次。不传 ``task_id`` 时保持原有行为，避免
+        对写文件等有副作用的工具做隐式去重。
+        """
         tool = self._tools.get(name)
         if tool is None:
             available = ", ".join(self.names) or "无"
@@ -51,4 +58,13 @@ class ToolRegistry:
                 error_kind="unknown_tool",
                 validation_stage="post_generation_pre_execution",
             )
-        return await tool.run(arguments)
+        if task_id is None:
+            return await tool.run(arguments)
+        digest = hashlib.sha256(arguments.encode("utf-8")).hexdigest()
+        key = f"{task_id}:{name}:{digest}"
+        cached = self._idempotency_cache.get(key)
+        if cached is not None:
+            return cached
+        result = await tool.run(arguments)
+        self._idempotency_cache[key] = result
+        return result
