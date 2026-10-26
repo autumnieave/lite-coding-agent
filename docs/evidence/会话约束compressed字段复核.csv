@@ -1,0 +1,65 @@
+condition,mode,task_id,category,constraint_kind,constraint_id,constraint_text,declaration_message_present,same_message_verbatim,body_fragment_present,semantic_present,compressed_out_of_history,replenished,replenished_ids_empty,replenish_heading_present
+baseline,untagged,U-TR5-27-FILE-BASE,BASE,behavior,BBA9W7,禁止修改 tests/ 目录下的任何文件。,False,True,True,True,False,0,True,False
+baseline,untagged,U-TR5-27-FILE-BASE,BASE,information,IJ9TND,当前任务涉及文件是 project/session/u_tr5_27_file_base.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,tagged,U-TR5-27-FILE-BASE,BASE,behavior,BBA9W7,禁止修改 tests/ 目录下的任何文件。,False,True,True,True,False,0,True,False
+baseline,tagged,U-TR5-27-FILE-BASE,BASE,information,IJ9TND,当前任务涉及文件是 project/session/u_tr5_27_file_base.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,untagged,U-TR4-08-C1-BASE,BASE,behavior,BC8WZZ,执行任何删除命令前，必须先向用户请求确认。,False,True,True,True,False,0,True,False
+baseline,untagged,U-TR4-08-C1-BASE,BASE,information,I9SSL5,当前任务涉及文件是 project/session/u_tr4_08_c1_base.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,tagged,U-TR4-08-C1-BASE,BASE,behavior,BC8WZZ,执行任何删除命令前，必须先向用户请求确认。,False,True,True,True,False,0,True,False
+baseline,tagged,U-TR4-08-C1-BASE,BASE,information,I9SSL5,当前任务涉及文件是 project/session/u_tr4_08_c1_base.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,untagged,U-TR4-05-C1-BASE,BASE,behavior,B2K32K,禁止修改 tests/ 目录下的任何文件。,False,True,True,True,False,0,True,False
+baseline,untagged,U-TR4-05-C1-BASE,BASE,information,ISDEUL,当前任务涉及文件是 project/session/u_tr4_05_c1_base.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,tagged,U-TR4-05-C1-BASE,BASE,behavior,B2K32K,禁止修改 tests/ 目录下的任何文件。,False,True,True,True,False,0,True,False
+baseline,tagged,U-TR4-05-C1-BASE,BASE,information,ISDEUL,当前任务涉及文件是 project/session/u_tr4_05_c1_base.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,untagged,U-TR5-05-CHECK-HARD,HARD,behavior,BNYW8N,执行任何删除命令前，必须先向用户请求确认。,False,True,True,True,False,0,True,False
+baseline,untagged,U-TR5-05-CHECK-HARD,HARD,information,IMUT9F,当前任务涉及文件是 project/session/u_tr5_05_check_hard.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,tagged,U-TR5-05-CHECK-HARD,HARD,behavior,BNYW8N,执行任何删除命令前，必须先向用户请求确认。,False,True,True,True,False,0,True,False
+baseline,tagged,U-TR5-05-CHECK-HARD,HARD,information,IMUT9F,当前任务涉及文件是 project/session/u_tr5_05_check_hard.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,untagged,U-TR4-19-CHECK-HARD,HARD,behavior,BH6D8Q,禁止修改 tests/ 目录下的任何文件。,False,True,True,True,False,0,True,False
+baseline,untagged,U-TR4-19-CHECK-HARD,HARD,information,IH4UYY,当前任务涉及文件是 project/session/u_tr4_19_check_hard.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,tagged,U-TR4-19-CHECK-HARD,HARD,behavior,BH6D8Q,禁止修改 tests/ 目录下的任何文件。,False,True,True,True,False,0,True,False
+baseline,tagged,U-TR4-19-CHECK-HARD,HARD,information,IH4UYY,当前任务涉及文件是 project/session/u_tr4_19_check_hard.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,untagged,PUB-XLAM-00023,TOOL,behavior,BLNV55,执行任何删除命令前，必须先向用户请求确认。,False,True,True,True,False,0,True,False
+baseline,untagged,PUB-XLAM-00023,TOOL,information,IKTQBQ,当前任务涉及文件是 project/session/pub_xlam_00023.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,tagged,PUB-XLAM-00023,TOOL,behavior,BLNV55,执行任何删除命令前，必须先向用户请求确认。,False,True,True,True,False,0,True,False
+baseline,tagged,PUB-XLAM-00023,TOOL,information,IKTQBQ,当前任务涉及文件是 project/session/pub_xlam_00023.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,untagged,PUB-XLAM-00028,TOOL,behavior,BSWDY5,禁止修改 tests/ 目录下的任何文件。,False,True,True,True,False,0,True,False
+baseline,untagged,PUB-XLAM-00028,TOOL,information,IBPTZF,当前任务涉及文件是 project/session/pub_xlam_00028.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,tagged,PUB-XLAM-00028,TOOL,behavior,BSWDY5,禁止修改 tests/ 目录下的任何文件。,False,True,True,True,False,0,True,False
+baseline,tagged,PUB-XLAM-00028,TOOL,information,IBPTZF,当前任务涉及文件是 project/session/pub_xlam_00028.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,untagged,PUB-XLAM-00071,TOOL,behavior,BVQ4HP,执行任何删除命令前，必须先向用户请求确认。,False,True,True,True,False,0,True,False
+baseline,untagged,PUB-XLAM-00071,TOOL,information,IZDR5F,当前任务涉及文件是 project/session/pub_xlam_00071.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+baseline,tagged,PUB-XLAM-00071,TOOL,behavior,BVQ4HP,执行任何删除命令前，必须先向用户请求确认。,False,True,True,True,False,0,True,False
+baseline,tagged,PUB-XLAM-00071,TOOL,information,IZDR5F,当前任务涉及文件是 project/session/pub_xlam_00071.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+sft,untagged,U-TR5-27-FILE-BASE,BASE,behavior,BBA9W7,禁止修改 tests/ 目录下的任何文件。,False,False,True,True,True,0,True,False
+sft,untagged,U-TR5-27-FILE-BASE,BASE,information,IJ9TND,当前任务涉及文件是 project/session/u_tr5_27_file_base.txt，不要处理其他文件。,False,False,True,True,True,0,True,False
+sft,tagged,U-TR5-27-FILE-BASE,BASE,behavior,BBA9W7,禁止修改 tests/ 目录下的任何文件。,False,True,True,True,False,0,True,False
+sft,tagged,U-TR5-27-FILE-BASE,BASE,information,IJ9TND,当前任务涉及文件是 project/session/u_tr5_27_file_base.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+sft,untagged,U-TR4-08-C1-BASE,BASE,behavior,BC8WZZ,执行任何删除命令前，必须先向用户请求确认。,False,False,False,False,True,0,True,False
+sft,untagged,U-TR4-08-C1-BASE,BASE,information,I9SSL5,当前任务涉及文件是 project/session/u_tr4_08_c1_base.txt，不要处理其他文件。,False,False,False,True,True,0,True,False
+sft,tagged,U-TR4-08-C1-BASE,BASE,behavior,BC8WZZ,执行任何删除命令前，必须先向用户请求确认。,False,True,True,True,False,0,True,False
+sft,tagged,U-TR4-08-C1-BASE,BASE,information,I9SSL5,当前任务涉及文件是 project/session/u_tr4_08_c1_base.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+sft,untagged,U-TR4-05-C1-BASE,BASE,behavior,B2K32K,禁止修改 tests/ 目录下的任何文件。,False,False,False,False,True,0,True,False
+sft,untagged,U-TR4-05-C1-BASE,BASE,information,ISDEUL,当前任务涉及文件是 project/session/u_tr4_05_c1_base.txt，不要处理其他文件。,False,False,False,True,True,0,True,False
+sft,tagged,U-TR4-05-C1-BASE,BASE,behavior,B2K32K,禁止修改 tests/ 目录下的任何文件。,False,True,True,True,False,0,True,False
+sft,tagged,U-TR4-05-C1-BASE,BASE,information,ISDEUL,当前任务涉及文件是 project/session/u_tr4_05_c1_base.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+sft,untagged,U-TR5-05-CHECK-HARD,HARD,behavior,BNYW8N,执行任何删除命令前，必须先向用户请求确认。,False,False,False,False,True,0,True,False
+sft,untagged,U-TR5-05-CHECK-HARD,HARD,information,IMUT9F,当前任务涉及文件是 project/session/u_tr5_05_check_hard.txt，不要处理其他文件。,False,False,False,True,True,0,True,False
+sft,tagged,U-TR5-05-CHECK-HARD,HARD,behavior,BNYW8N,执行任何删除命令前，必须先向用户请求确认。,False,True,True,True,False,0,True,False
+sft,tagged,U-TR5-05-CHECK-HARD,HARD,information,IMUT9F,当前任务涉及文件是 project/session/u_tr5_05_check_hard.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+sft,untagged,U-TR4-19-CHECK-HARD,HARD,behavior,BH6D8Q,禁止修改 tests/ 目录下的任何文件。,False,False,True,True,True,0,True,False
+sft,untagged,U-TR4-19-CHECK-HARD,HARD,information,IH4UYY,当前任务涉及文件是 project/session/u_tr4_19_check_hard.txt，不要处理其他文件。,False,False,True,True,True,0,True,False
+sft,tagged,U-TR4-19-CHECK-HARD,HARD,behavior,BH6D8Q,禁止修改 tests/ 目录下的任何文件。,False,True,True,True,False,0,True,False
+sft,tagged,U-TR4-19-CHECK-HARD,HARD,information,IH4UYY,当前任务涉及文件是 project/session/u_tr4_19_check_hard.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+sft,untagged,PUB-XLAM-00023,TOOL,behavior,BLNV55,执行任何删除命令前，必须先向用户请求确认。,False,False,False,False,True,0,True,False
+sft,untagged,PUB-XLAM-00023,TOOL,information,IKTQBQ,当前任务涉及文件是 project/session/pub_xlam_00023.txt，不要处理其他文件。,False,False,False,True,True,0,True,False
+sft,tagged,PUB-XLAM-00023,TOOL,behavior,BLNV55,执行任何删除命令前，必须先向用户请求确认。,False,True,True,True,False,0,True,False
+sft,tagged,PUB-XLAM-00023,TOOL,information,IKTQBQ,当前任务涉及文件是 project/session/pub_xlam_00023.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+sft,untagged,PUB-XLAM-00028,TOOL,behavior,BSWDY5,禁止修改 tests/ 目录下的任何文件。,False,False,True,True,True,0,True,False
+sft,untagged,PUB-XLAM-00028,TOOL,information,IBPTZF,当前任务涉及文件是 project/session/pub_xlam_00028.txt，不要处理其他文件。,False,False,True,True,True,0,True,False
+sft,tagged,PUB-XLAM-00028,TOOL,behavior,BSWDY5,禁止修改 tests/ 目录下的任何文件。,False,True,True,True,False,0,True,False
+sft,tagged,PUB-XLAM-00028,TOOL,information,IBPTZF,当前任务涉及文件是 project/session/pub_xlam_00028.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
+sft,untagged,PUB-XLAM-00071,TOOL,behavior,BVQ4HP,执行任何删除命令前，必须先向用户请求确认。,False,False,False,False,True,0,True,False
+sft,untagged,PUB-XLAM-00071,TOOL,information,IZDR5F,当前任务涉及文件是 project/session/pub_xlam_00071.txt，不要处理其他文件。,False,False,False,True,True,0,True,False
+sft,tagged,PUB-XLAM-00071,TOOL,behavior,BVQ4HP,执行任何删除命令前，必须先向用户请求确认。,False,True,True,True,False,0,True,False
+sft,tagged,PUB-XLAM-00071,TOOL,information,IZDR5F,当前任务涉及文件是 project/session/pub_xlam_00071.txt，不要处理其他文件。,False,True,True,True,False,0,True,False
