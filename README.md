@@ -5,8 +5,8 @@ github.com/autumnieave/lite-coding-agent
 
 ## 核心发现
 
-- 约束层：压力档 19→5；补录只验 ID 不验正文，
-  7B untagged 行为规则 3/8 vs 信息 8/8。
+- 约束层：压力档（deepseek-flash）19→5；补录只验 ID 不验正文，
+  7B untagged 行为规则 3/8 vs 信息 8/8（Qwen2.5-7B，train-v5）。
 
 - 工具层：从零实现 Tool-Calling Agent Loop + 6 工具
   （Schema 校验 + 路径沙箱）+ 幂等键 + checkpoint 恢复，
@@ -61,7 +61,11 @@ lite-agent chat "列出当前目录" --verbose  # 打印工具调用完整参数
 
 ```text
 lite-coding-agent/
-├── src/agent/{core,tools,memory,cli}
+├── src/agent/
+│   ├── core/
+│   ├── tools/
+│   ├── memory/
+│   └── cli/
 ├── scripts/
 ├── training/
 ├── tests/
@@ -76,14 +80,14 @@ lite-coding-agent/
 
 ## 评测
 
-**约束保留（40 条约束 / 25 轮 × 20 次）**
+**约束保留（40 条/25 轮×20 次）**
 
 | 组 | 逐字保留 | 上下文仍在 | 违反 |
 |---|---:|---:|---:|
 | off | 552/800（69.0%） | 640/800 | 19 |
 | on | 760/800（95.0%） | 800/800 | 5 |
 
-**final-test-v2（1.5B，10 次）**
+**final-test-v2（1.5B，10次）**
 
 | 指标 | S0 | S1 |
 |---|---:|---:|
@@ -100,13 +104,19 @@ lite-coding-agent/
 | +15% Dolly | 50/60 | 30/30 | 20/30 |
 | SFT + DPO | 60/60 | 30/30 | 30/30 |
 
-**复现**：train-v6 adapter 位于
+**clean held-out（train-v6，45 任务 × 10 rollout，7B SFT）**
+
+| 条件 | 通过率 |
+|---|---:|
+| baseline | 49.4% |
+| SFT | 99.8%（+50.3pp，McNemar p<1e-13） |
+
+45/45 任务一致；无逐字重叠组 +50.5pp 与有重叠组 +50.0pp 几乎相同，排除逐字记忆。边界：同族泛化，非跨模板。
+
+**复现**：train-v6 adapter 在
 `private/kaggle_pull_clean_heldout_v1/clean_heldout/adapter/`，
 SHA-256 `37928a28...a4b96` 校验通过，392 个 LoRA tensor 可读；
 本机 MX250 2GB 不足，需 GPU ≥16GB。
-
-逐次记录见 `docs/evidence/`；历史版本见
-`docs/evidence/训练管线验证.md`、`docs/evidence/小基座v7结果.md`。
 
 ## 边界与未覆盖
 
@@ -114,36 +124,27 @@ SHA-256 `37928a28...a4b96` 校验通过，392 个 LoRA tensor 可读；
   （valid stable 15→20、task_success 40/110→10/110），
   预注册门禁未满足
 
-- GRPO 未启动：45 任务 44 个 8/8 饱和、中间态 0，
-  SFT 已饱和，不做 RL。
+- GRPO 未启动：45 任务 44 个 8/8 饱和、中间态 0，SFT 已饱和，不做 RL。
 
-- constrained decoding 0 条结果：Kaggle v1 路径 ERROR、
-  v2 bitsandbytes ERROR、v3 取消、v4 加载超时。
+- constrained decoding 0 条结果：v1 路径、v2 bitsandbytes ERROR、v3 取消、v4 加载超时。
 
-- Token 三段归因（工具返回 69.9%）属运行时优化，
-  不在后训练主线，未做截断对照实验；
+- Token 三段归因（工具返回 69.9%）属运行时优化，不在后训练主线，未做截断对照；
   证据见 `docs/evidence/Token三段归因.md`。
 
-- 同族泛化非跨模板：45 个 clean 任务仍与 train 有同族样本。
+- 同族泛化非跨模板：45 个 clean 任务仍属同族。
 
 ## 参考、Related Work 与 License
 
 ### Related Work
 
-主样本是可脚本判定的格式违反，故选 constrained decoding；
-Outlines / JSON Schema 为同层基线；暂不接 Guardrails / τ-bench。ADR 见 `docs/decisions.md`。
+主样本可脚本判定格式违反，故选 constrained decoding；Outlines / JSON Schema 为同层基线，暂不接 Guardrails / τ-bench。ADR 见 `docs/decisions.md`。
 
 ### 参考
 
 - [claude-code-from-scratch](https://github.com/Windy3f3f3f3f/claude-code-from-scratch)
-  — Loop/工具/压缩对照。
-
 - [How Claude Code Works](https://github.com/Windy3f3f3f3f/how-claude-code-works)
-  — 源码解析。
-
-- [Outlines](https://github.com/dottxt-ai/outlines) — 格式约束基线。
-
-- [JSON Schema](https://json-schema.org/) — schema 来源。
+- [Outlines](https://github.com/dottxt-ai/outlines)
+- [JSON Schema](https://json-schema.org/)
 
 ### License
 
