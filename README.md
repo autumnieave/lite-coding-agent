@@ -11,7 +11,7 @@ Agent 约束遵守实验平台——违反归因、可复现评测与训练侧�
 - 约束层：压力档（deepseek-flash）违规次数 19→5；补录只验 ID 不验正文，
   7B untagged 行为规则 3/8 vs 信息 8/8（Qwen2.5-7B，train-v5）。
 
-- 工具层：Tool-Calling Agent Loop + 6 工具（Schema 校验 + 路径沙箱）、
+- 工具层：Tool-Calling Agent Loop + 6 工具（Pydantic 参数校验 + 路径越界拦截）、
   幂等键 + checkpoint 恢复，单进程 stdio-only。
 
 - 评测层：temperature=0 下 3.57% 翻转率（560 配对）；
@@ -25,6 +25,16 @@ Agent 约束遵守实验平台——违反归因、可复现评测与训练侧�
 
 - 决策层：能启动 ≠ 该启动。GRPO 正确预检：45×8 rollout，
   44/45 饱和、中间态 0，不做全量 RL。
+
+```mermaid
+flowchart LR
+A[约束层<br/>原文在≠语义在≠行为生效]-->B[工具层<br/>能调用≠调用可靠]
+B-->C[评测层<br/>模型能跑≠结果可信]
+C-->D[训练层<br/>能训≠训对了]
+D-->E[决策层<br/>能启动≠该启动]
+```
+
+五层各自独立验证，不跳层外推。
 
 ## 为什么做
 
@@ -43,23 +53,28 @@ Agent 约束遵守实验平台——违反归因、可复现评测与训练侧�
 
 ## 快速开始
 
-Python 3.11+，需支持工具调用的 LLM API（Claude / GPT-4o / DeepSeek）。
+Python 3.11+，需支持工具调用的 LLM（Claude / GPT-4o / DeepSeek）。
 
 ```bash
-git clone https://github.com/autumnieave/lite-coding-agent.git
+git clone git@github.com:autumnieave/lite-coding-agent-private.git lite-coding-agent
 cd lite-coding-agent && python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
 export LLM_API_KEY="..." LLM_BASE_URL="..." LLM_MODEL="..."
 
 lite-agent chat "列出当前目录"           # 执行一次任务
-lite-agent chat "列出当前目录" --verbose  # 打印工具调用完整参数与结果
+lite-agent chat "列出当前目录" --verbose  # 打印工具调用参数与结果
 ```
 
-> 转 public 前 clone 用 -private 后缀；public 仓库同步后地址不变。
+> 转 public 前 clone 用 -private 后缀；public 同步后地址不变：github.com/autumnieave/lite-coding-agent
 
-配置优先级：环境变量 > .env。退出码：0 成功 / 1 任务失败 / 2 配置错误。
+配置：环境变量 > .env。退出码：0 成功 / 1 失败 / 2 配置错误。
 用法见 `lite-agent --help`，示例见 `docs/usage.md`。
+
+**3 分钟检查清单**：
+1. `lite-agent chat "列出当前目录"` — 验证 Agent Loop 能跑
+2. `pytest -q` — 看 857 条测试
+3. 打开 `docs/evidence/会话约束分层验证.md` — 看一条 trace 归因
 
 ## 项目结构
 
@@ -118,8 +133,8 @@ lite-coding-agent/
 45/45 一致；无逐字重叠组 +50.5pp、有重叠组 +50.0pp，排除逐字记忆。
 边界：同族泛化，非跨模板。
 
-**复现**：train-v6 adapter 存于 `private/kaggle_pull_clean_heldout_v1/clean_heldout/adapter/`，
-SHA-256 `37928a28...a4b96` 校验通过（392 个 LoRA tensor）；本机 MX250 不足，需 GPU ≥16GB。
+**复现**：train-v6 adapter 在 `private/kaggle_pull_clean_heldout_v1/clean_heldout/adapter/`，
+SHA-256 `37928a28...a4b96` 校验通过（392 LoRA tensor）；本机 MX250 不足，需 GPU ≥16GB。
 
 ## 边界与未覆盖
 
@@ -137,7 +152,9 @@ SHA-256 `37928a28...a4b96` 校验通过（392 个 LoRA tensor）；本机 MX250 
 - 同族泛化非跨模板：45 个 clean 任务仍与 train 有同模板训练样本，
   +50.3pp 不能外推到“没见过的任务族”。
 
-## 参考、Related Work 与 License
+下一步优先验证跨模板泛化（当前仅同族）和 constrained decoding 多后端接入。
+
+## 参考、Related Work、License
 
 ### Related Work
 
@@ -152,4 +169,4 @@ SHA-256 `37928a28...a4b96` 校验通过（392 个 LoRA tensor）；本机 MX250 
 
 ### License
 
-MIT，详见 LICENSE。
+MIT，见 LICENSE。
