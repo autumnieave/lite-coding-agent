@@ -21,6 +21,14 @@
 - staging：3/3 成功，error 0；full：449/450 成功，error 0。
 - 失败 rollout：`PUB-XLAM-00051` rollout 6 failed_checks=['matches_complete']。
 
+### 1.2 Adapter 本地归档
+
+- 路径：`private/kaggle_pull_clean_heldout_v1/clean_heldout/adapter/`
+- `adapter_model.safetensors`：645,975,704 bytes，SHA-256 `37928a28d67a5a8350f3b49450fc6945c3ffe05c09da7ea0de36136b4a6a4b96`
+- 拉取来源：Kaggle kernel `autumnsq/lite-agent-clean-heldout-v6`
+- 结构校验：`safetensors` 可读取 392 个 LoRA tensor；`adapter_config.json` 为 r=64 / peft 0.20.0。
+- 加载验证：原 kernel 的 staging 3/3 任务使用同一 adapter，推理峰值显存 6.82 GB；本机仅有 2 GB MX250，未重跑 7B rollout。
+
 ## 2. 总体指标
 
 | 指标 | baseline 均值 | SFT 均值 | 效应量 | 95% CI | 任务级 McNemar p | Holm p |

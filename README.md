@@ -7,11 +7,11 @@ github.com/autumnieave/lite-coding-agent
 
 项目概述：针对长任务中上下文压缩静默丢失约束、且“约束在上下文≠模型遵守”的痛点，从零构建终端 Coding Agent 实验平台，按 Harness 分层验证（约束→工具→评测→训练→决策）组织，核心方法论为“存在≠生效”——每层只证明本层能证明的事，不跳层外推。验证规模：409 任务池、3,272 条 baseline rollout、450 对配对统计。
 
-技术栈：后训练（SFT/QLoRA/Loss Masking）· 评测（Trace/pass^k/McNemar/预注册门禁）· Agent（Harness Engineering/Guardrails/MCP/Context Engineering）· 工程（vLLM/pytest 857/CI）
+技术栈：后训练（SFT/QLoRA/Loss Masking）· 评测（Trace/pass^k/McNemar/预注册门禁）· Agent（Harness Engineering/Guardrails/Context Engineering）· 工程（vLLM/pytest 857/CI）
 
 约束层（Guardrails + Context Engineering）：原文在 ≠ 语义在 ≠ 行为生效。自研约束独立存储 + 双通道注入 + ID 补录，压力档下违规 19→5 次、原文保留 69%→95%；分层诊断发现补录仅验 ID 不验正文，7B untagged 场景下行为规则出现选择性丢失（3/8 vs 8/8），定位双重校验为修复方向。
 
-工具层（Harness Engineering）：能调用 ≠ 调用可靠。从零实现 Agent Loop + 6 工具与手写 stdio MCP 客户端（无 SDK），实现协议错误分离与幂等键防重复；Token 追踪定位工具返回占 69.9%，成本重心在运行时。取舍：单进程 stdio-only，未覆盖异步与崩溃恢复。
+工具层（Harness Engineering）：能调用 ≠ 调用可靠。从零实现 Tool-Calling Agent Loop + 6 工具（参数 Schema 校验 + 路径沙箱），补幂等键防重复副作用、会话 checkpoint 支持 kill 后恢复；取舍：单进程 stdio-only，未覆盖异步调用与崩溃恢复。
 
 评测层（Trace 探针）：模型能跑 ≠ 结果可信。全链路 Trace 发现 temperature=0 下仍有 3.57% 判定翻转率（560 配对观测），引入 pass^k 门禁；在去重叠的 45 个任务上，SFT 提升 +50.3pp，重叠/非重叠增益一致，排除逐字记忆。
 
@@ -141,7 +141,6 @@ BASE 全灭（`20/30 → 0/30`）根因是训练未传 `tools=`，训练渲染 3
 - ⚠️ **逐字保留 ≠ 行为合规**：8 任务 × 2 类约束分层探针中，代号保留 64/64、语义保留 59/64，但语义保留的 59 条里只有 23 条行为合规（39.0%）、17 条违反、19 条未分类；SFT untagged 的行为规则语义保留降到 3/8，信息类仍 8/8。详见 `docs/evidence/会话约束分层验证.md`
 - ✅ **项目记忆**：按目录层级向上加载 `AGENTS.md`，C1–C5 解析为 `source=agents_md` 的约束，改文件后下一轮刷新
 - ✅ **会话持久化**：`session.jsonl` 逐轮追加，kill 后新进程能恢复消息历史 / token 计数 / 约束状态
-- ✅ **MCP 客户端（stdio）**：手写 JSON-RPC over stdio，`initialize` / `tools/list` / `tools/call` 全流程；发现的工具按 `mcp__<server>__<tool>` 注册进工具表。MCP 调用前额外过一道约束校验（本项目原创设计，见 ADR-018）
 
 ## 架构图
 
@@ -197,7 +196,6 @@ export LLM_MODEL="deepseek-chat"
 lite-agent --help                            # 查看用法与参数
 lite-agent chat "列出当前目录"                # 执行一次任务
 lite-agent chat "列出当前目录" --verbose      # 同上，打印每次工具调用的完整参数与结果
-lite-agent chat "用 echo 工具说 hello" --mcp-server "python examples/echo_mcp_server.py"   # 接一个 MCP server
 ```
 
 > 输出分流：**stdout 只放模型的最终答案**，工具进度默认就实时上报到 **stderr**（`· ` 前缀；`--verbose` 换成 `[verbose] ` 并带完整参数与结果）。因此 `lite-agent chat "..." > answer.txt` 拿到的始终是干净答案。
@@ -211,7 +209,6 @@ lite-coding-agent/
 │   ├── core/          # Agent Loop、LLM 抽象、上下文管理
 │   ├── tools/         # 工具注册表与具体工具
 │   ├── memory/        # 项目记忆与会话持久化
-│   ├── mcp/           # MCP 客户端（stdio + JSON-RPC）
 │   └── cli/           # 命令行入口
 ├── tests/             # 单元测试
 ├── docs/              # 架构与决策文档
@@ -260,7 +257,6 @@ lite-coding-agent/
 - [x] 约束注入 system prompt（短任务不触发压缩也生效）
 - [x] 项目记忆 + checkpoint
 - [x] 单元测试 + GitHub Actions
-- [x] MCP 客户端（stdio + JSON-RPC，含执行层约束校验）
 - [x] 阶段 A：逐轮 trace（messages / 工具参数 / 约束位置 / 压缩事件）+ 固定采样配置
 - [x] 违反根因分布表 + 检查项命中率表 + 翻转率报告 + 冲突专项
 - [x] 方向 C 手工自检扩采样（20 次）+ 预注册门槛 + Fisher 检验
@@ -382,10 +378,9 @@ S0 的 10 次步数失败集中在 `U-FT01-BASE`（重复 `read_file` 6 轮）�
   写成效率提升。
 - **行为验证覆盖面窄**：40 条约束里只有 3 条有输出层判定（JSON / snake_case / 无代码围栏），其余只统计「还在不在上下文里」。
 - **约束来源未全覆盖**：对比实验只走「用户声明」一条路径，`source=agents_md` 没有进过实验数据。
-- **MCP 只支持 stdio**：没有 SSE / OAuth / 动态工具刷新 / 连接重试。
+- Token 三段归因（工具返回 69.9%）属 Agent 运行时优化，不在本项目后训练主线，未做截断对照实验；证据见 `docs/evidence/Token三段归因.md`。
 - **执行层约束校验只看工具名、不看参数**：拦不住「用 echo 工具把 Key 回显出来」这类（ADR-018）。
 - **退出时的上游 traceback**：`httpcore2` 关闭流的缺陷，不影响退出码、stdout 与文件改动（ADR-007）。
-- **MCP 端到端用例在高负载下偶发失败**：`tests/test_mcp_cli.py` 会真的拉起子进程，已标 `slow`、CI 单独 job 跑；本地 `pytest -q -m "not slow" -k "not mcp"` 当前 821 passed + 1 skipped。
 
 ## Related Work：为什么选 constrained decoding
 
@@ -415,9 +410,7 @@ S0 的 10 次步数失败集中在 `U-FT01-BASE`（重复 `read_file` 6 轮）�
 |---|---|---|
 | Agent Loop / 工具系统 / 流式输出 / 上下文压缩 / 会话 checkpoint | **有**——对照的是设计取舍，代码全部自写，差异逐条记在 ADR 里 | ADR-006 \~ ADR-011、ADR-013、ADR-015 |
 | 项目记忆读 `AGENTS.md` | **部分**——Claude Code 里对应的是 CLAUDE.md 机制，**不是**它那套跨会话 memory 系统（四分类 + 语义召回） | ADR-014 |
-| MCP 客户端 | **有**——SDK 封装 / stdio + SSE / 三段式命名 / 15s 超时 | ADR-017 |
 | **关键约束保留** | **无，本项目原创**——Claude Code 与参考项目都没有「约束独立存储 + 压缩前注入 + 压缩后校验自愈」 | ADR-004、ADR-012、ADR-016 |
-| **MCP 工具的执行层约束校验** | **无，本项目原创**——拦截依据是本项目自己的约束清单 | ADR-018 |
 
 > 所以本项目**不是**「参考 Claude Code 做的复刻」：核心差异化机制（约束保留）是原创，其余模块是照着公开设计重写并记下差异。
 
