@@ -8,20 +8,15 @@ Agent 约束遵守实验平台——违反归因、可复现评测与训练侧�
 
 ## 核心发现
 
-- 约束层：压力档（deepseek-flash）违规次数 19→5；补录只验 ID 不验正文，
-  7B untagged 行为规则 3/8 vs 信息 8/8（Qwen2.5-7B，train-v5）。
+- 约束层：压力档（deepseek-flash）违规 19→5；补录只验 ID 不验正文——59 条语义保留的约束中只有 23 条被真正遵守（39.0%），7B untagged 行为规则 3/8 vs 信息 8/8（Qwen2.5-7B，train-v5）。
 
-- 工具层：Tool-Calling Agent Loop + 6 工具（Pydantic 参数校验 + 路径越界拦截）、
-  幂等键 + checkpoint 恢复，单进程 stdio-only。
+- 工具层：Tool-Calling Agent Loop + 6 工具（Pydantic 参数校验 + 路径越界拦截），edit_file 三道防线（read-before-edit / mtime 防护 / old_string 唯一性）；幂等键 + checkpoint 恢复，单进程 stdio-only。
 
-- 评测层：同一任务跑 10 次，同一配置下也有 3.57% 的判定翻转（560 配对）——单次结果不可信。45 个去重叠任务上，SFT 单次通过率 49.4% → 99.8%（+50.3pp，McNemar p<1e-13）；更严格的“10 次全过”从 baseline 0/45（推断）到 SFT 44/45；项目门禁的 ≥6/10 稳定通过，SFT 45/45（baseline 仅 8 次观测，无法计算）。
+- 评测层：同一任务跑 10 次，3.57% 判定翻转（560 配对）→ 单次不可信。45 个去重叠任务上，SFT 单次通过率 49.4% → 99.8%（+50.3pp，McNemar p<1e-13），“10 次全过”从 0/45（推断）到 44/45。
 
-- 训练层：full-loss 致 CTX-HARD 0/10，
-  assistant-only Loss Masking 恢复 10/10；
-  API/本地 99.8%/90.9%，优势在格式。
+- 训练层：7B SFT 首跑 BASE 0/30 全灭 → Trace 定位训练/推理模板不一致（307→1567 token）→ 修复后 30/30；full-loss 致 CTX-HARD 0/10，assistant-only Loss Masking 恢复 10/10。API/本地 99.8%/90.9%，优势在格式。
 
-- 决策层：能启动 ≠ 该启动。GRPO 正确预检：45×8 rollout，
-  44/45 饱和、中间态 0，不做全量 RL。
+- 决策层：能启动 ≠ 该启动。GRPO 正确预检 360 条 rollout（45 任务 × 8 次）：44/45 已全对、中间态 0，不做全量 RL。
 
 ```mermaid
 flowchart LR
@@ -35,15 +30,13 @@ D-->E[决策层<br/>能启动≠该启动]
 
 ## 为什么做
 
-压缩会静默丢失约束，模型也未必遵守；验证必须逐层归因。
+约束会丢，模型也未必遵守；须逐层归因。
 
 ## 核心特性
 
-- 运行时：Agent Loop、6 工具、幂等键、checkpoint 与流式输出。
-
-- 上下文：四层压缩、独立约束存储、双通道注入与 ID 补录。
-
-- 评测：约束保留、行为 benchmark、trace 归因与稳定性。
+- 运行时：Agent Loop、6 工具、幂等键、checkpoint/流式输出。
+- 上下文：四层压缩、独立约束存储、双通道注入、ID 补录。
+- 评测：约束保留、行为 benchmark、trace 归因、稳定性。
 
 **从零实现**：Agent Loop、6 工具、约束独立存储、评测 harness；
 **依赖**：vLLM（1.5B 推理）、Pydantic（参数校验）、transformers（14B 对照）。
@@ -59,18 +52,18 @@ pip install -e ".[dev]"
 
 export LLM_API_KEY="..." LLM_BASE_URL="..." LLM_MODEL="..."
 
-lite-agent chat "列出当前目录"           # 执行一次任务
-lite-agent chat "列出当前目录" --verbose  # 打印工具调用参数与结果
+lite-agent chat "列出当前目录"
+lite-agent chat "列出当前目录" --verbose
 ```
 
 > 转 public 前 clone 用 -private 后缀；public 同步后地址不变：github.com/autumnieave/lite-coding-agent
 
 配置：环境变量 > .env。退出码：0 成功 / 1 失败 / 2 配置错误。
-用法见 `lite-agent --help`，示例见 `docs/usage.md`。
+用法/示例见 `lite-agent --help`、`docs/usage.md`。
 
 **3 分钟检查清单**：
 1. `lite-agent chat "列出当前目录"` — 验证 Agent Loop 能跑
-2. `pytest -q` — 看 857 条测试
+2. `pytest -q` — 857 条测试
 3. 打开 `docs/evidence/会话约束分层验证.md` — 看一条 trace 归因
 
 ## 项目结构
@@ -120,18 +113,17 @@ lite-coding-agent/
 | +15% Dolly | 50/60 | 30/30 | 20/30 |
 | SFT + DPO | 60/60 | 30/30 | 30/30 |
 
-**clean held-out（train-v6，45 任务 × 10 rollout，7B SFT）**
+**clean held-out（train-v6，45 任务，7B）**
 
-| 条件 | 通过率 |
-|---|---:|
-| baseline | 49.4% |
-| SFT | 99.8%（+50.3pp，McNemar p<1e-13） |
+| 指标 | baseline | SFT |
+|---|---:|---:|
+| pass@1（单次通过率） | 49.4% | 99.8%（+50.3pp，McNemar p<1e-13） |
+| pass^10（10 次全过） | 0/45（推断） | 44/45 |
+| ≥6/10 稳定通过（项目门禁） | 未计算（baseline 仅 8 次观测） | 45/45 |
 
-45/45 一致；无逐字重叠组 +50.5pp、有重叠组 +50.0pp，排除逐字记忆。
-边界：同族泛化，非跨模板。
+45/45 一致；重叠/非重叠增益接近，排除记忆；同族非跨模板。
 
-**复现**：train-v6 adapter 在 `private/kaggle_pull_clean_heldout_v1/clean_heldout/adapter/`，
-SHA-256 `37928a28...a4b96` 校验通过（392 LoRA tensor）；本机 MX250 不足，需 GPU ≥16GB。
+**复现**：train-v6 adapter 在 `private/kaggle_pull_clean_heldout_v1/clean_heldout/adapter/`，SHA-256 `37928a28...a4b96` 校验通过；本机 MX250 不足，需 GPU ≥16GB。
 
 ## 边界与未覆盖
 
@@ -139,7 +131,7 @@ SHA-256 `37928a28...a4b96` 校验通过（392 LoRA tensor）；本机 MX250 不�
   （valid stable 15→20、task_success 40/110→10/110），
   预注册门禁未满足
 
-- GRPO 未启动：45 任务 44 个 8/8 饱和、中间态 0，不做 RL。
+- GRPO 未启动：正确预检判定 SFT 已饱和，RL 无梯度信号。
 
 - constrained decoding 0 条结果：v1 路径、v2 bitsandbytes ERROR、v3 取消、v4 超时。
 
@@ -151,7 +143,7 @@ SHA-256 `37928a28...a4b96` 校验通过（392 LoRA tensor）；本机 MX250 不�
 
 下一步优先验证跨模板泛化（当前仅同族）和 constrained decoding 多后端接入。
 
-## 参考、Related Work、License
+## 参考与 License
 
 ### Related Work
 
@@ -164,6 +156,4 @@ SHA-256 `37928a28...a4b96` 校验通过（392 LoRA tensor）；本机 MX250 不�
 - [Outlines](https://github.com/dottxt-ai/outlines)
 - [JSON Schema](https://json-schema.org/)
 
-### License
-
-MIT，见 LICENSE。
+License：MIT，见 LICENSE。
