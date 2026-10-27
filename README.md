@@ -123,6 +123,9 @@ BASE 全灭（`20/30 → 0/30`）根因是训练未传 `tools=`，训练渲染 3
 | 补数据饱和 | train-v5 468/84，CTX-HARD 37 条；held-out 已 60/60，无剩余空间，价值在训练覆盖 | `docs/evidence/补数据决策.md` |
 | DPO | 96GB 跑通（5 optimizer step）；SFT `60/60` → SFT+DPO `60/60`，无额外增量；58 对仅 CTX `code_prefix` | `docs/evidence/DPO结果.md`、`docs/evidence/DPO失败诊断.md` |
 
+### train-v6 adapter 复现
+
+train-v6 adapter 已归档到 `private/kaggle_pull_clean_heldout_v1/clean_heldout/adapter/`，SHA-256 `37928a28...a4b96` 校验通过，392 个 LoRA tensor 可读；本机 MX250 2GB 无法跑 7B rollout，复现需 GPU ≥16GB。
 
 ## 核心特性
 
