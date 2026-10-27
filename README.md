@@ -9,7 +9,7 @@ github.com/autumnieave/lite-coding-agent
   7B untagged 行为规则 3/8 vs 信息 8/8（Qwen2.5-7B，train-v5）。
 
 - 工具层：从零实现 Tool-Calling Agent Loop + 6 工具
-  （Schema 校验 + 路径沙箱）+ 幂等键 + checkpoint 恢复，
+  （Pydantic 参数校验 + 路径越界拦截）+ 幂等键 + checkpoint 恢复，
   单进程 stdio-only 边界。
 
 - 评测层：temperature=0 下 3.57% 翻转率（560 配对），
@@ -19,8 +19,8 @@ github.com/autumnieave/lite-coding-agent
   assistant-only Loss Masking 恢复 10/10；
   API vs 本地 99.8% vs 90.9%，优势在格式。
 
-- 决策层：GRPO 预检 45 任务 44/45 为 8/8 饱和、
-  中间态 0，故不做 RL。
+- 决策层：能启动 ≠ 该启动。GRPO 正确预检——45 任务 × 8 rollout，
+  44/45 饱和、中间态 0，故不启动全量 RL。
 
 ## 为什么做
 
@@ -30,7 +30,7 @@ github.com/autumnieave/lite-coding-agent
 
 ## 核心特性
 
-- Agent 运行时：Agent Loop + 6 工具（Schema 校验 + 路径沙箱）+
+- Agent 运行时：Agent Loop + 6 工具（Pydantic 参数校验 + 路径越界拦截）+
   幂等键 + checkpoint 恢复 + 流式输出。
 
 - Context Engineering：四层压缩 + 约束独立存储 +
