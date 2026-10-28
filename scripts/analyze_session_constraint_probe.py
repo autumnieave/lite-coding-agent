@@ -14,7 +14,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-CONDITIONS = ("baseline", "sft")
+CONDITIONS = ("baseline", "v5", "v6", "sft")
 MODES = ("untagged", "tagged")
 KINDS = ("behavior", "information")
 LABELS = (
@@ -89,8 +89,11 @@ def summarize(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     for row in rows:
         grouped[(str(row["condition"]), str(row["mode"]))].append(row)
 
+    observed = {str(row["condition"]) for row in rows}
+    ordered_conditions = [name for name in CONDITIONS if name in observed]
+    ordered_conditions.extend(sorted(observed.difference(ordered_conditions)))
     conditions: dict[str, Any] = {}
-    for condition in CONDITIONS:
+    for condition in ordered_conditions:
         modes: dict[str, Any] = {}
         for mode in MODES:
             subset = grouped.get((condition, mode), [])
@@ -141,35 +144,43 @@ def summarize(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     deltas: dict[str, Any] = {}
     for mode in MODES:
         baseline = conditions.get("baseline", {}).get(mode)
-        sft = conditions.get("sft", {}).get(mode)
-        if not baseline or not sft:
+        if not baseline:
             continue
-        deltas[mode] = {
-            "behavior_semantic_rate_delta": _delta(
-                baseline["retention_by_kind"]["behavior"]["final_semantic_rate"],
-                sft["retention_by_kind"]["behavior"]["final_semantic_rate"],
-            ),
-            "information_semantic_rate_delta": _delta(
-                baseline["retention_by_kind"]["information"]["final_semantic_rate"],
-                sft["retention_by_kind"]["information"]["final_semantic_rate"],
-            ),
-            "behavior_code_rate_delta": _delta(
-                baseline["retention_by_kind"]["behavior"]["final_code_rate"],
-                sft["retention_by_kind"]["behavior"]["final_code_rate"],
-            ),
-            "strict_compliance_rate_delta": _delta(
-                baseline["strict_compliance_rate"], sft["strict_compliance_rate"]
-            ),
-            "classified_compliance_rate_delta": _delta(
-                baseline["classified_compliance_rate"], sft["classified_compliance_rate"]
-            ),
-        }
+        for condition in ordered_conditions:
+            if condition == "baseline":
+                continue
+            variant = conditions.get(condition, {}).get(mode)
+            if not variant:
+                continue
+            deltas.setdefault(condition, {})[mode] = {
+                "behavior_semantic_rate_delta": _delta(
+                    baseline["retention_by_kind"]["behavior"]["final_semantic_rate"],
+                    variant["retention_by_kind"]["behavior"]["final_semantic_rate"],
+                ),
+                "information_semantic_rate_delta": _delta(
+                    baseline["retention_by_kind"]["information"]["final_semantic_rate"],
+                    variant["retention_by_kind"]["information"]["final_semantic_rate"],
+                ),
+                "behavior_code_rate_delta": _delta(
+                    baseline["retention_by_kind"]["behavior"]["final_code_rate"],
+                    variant["retention_by_kind"]["behavior"]["final_code_rate"],
+                ),
+                "strict_compliance_rate_delta": _delta(
+                    baseline["strict_compliance_rate"], variant["strict_compliance_rate"]
+                ),
+                "classified_compliance_rate_delta": _delta(
+                    baseline["classified_compliance_rate"], variant["classified_compliance_rate"]
+                ),
+            }
 
     return {
         "version": "session-constraint-analysis-v1",
         "rows": len(rows),
         "conditions": conditions,
-        "baseline_vs_sft": deltas,
+        "baseline_vs_sft": deltas.get("sft", {}),
+        "baseline_vs_v5": deltas.get("v5", {}),
+        "baseline_vs_v6": deltas.get("v6", {}),
+        "baseline_vs_variants": deltas,
         "classification_basis": "final_semantic_present; code-only retention counts as text_lost",
         "note": "Directional evidence only; no McNemar or bootstrap is computed.",
     }
@@ -191,10 +202,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     records: list[dict[str, Any]] = []
-    for condition in CONDITIONS:
-        path = args.input_dir / f"{condition}.jsonl"
-        if not path.is_file():
-            raise FileNotFoundError(f"missing {path}")
+    paths = sorted(args.input_dir.glob("*.jsonl"))
+    if not paths:
+        raise FileNotFoundError(f"no JSONL probe outputs in {args.input_dir}")
+    for path in paths:
         records.extend(load_jsonl(path))
     rows = flatten(records)
     summary = summarize(rows)

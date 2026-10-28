@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from scripts.select_session_constraint_tasks import ALLOCATION, select_rows, stable_key
+from scripts.select_session_constraint_tasks import (
+    ALLOCATION,
+    parse_allocation,
+    select_rows,
+    stable_key,
+)
 
 
 def row(task_id: str, category: str) -> dict:
@@ -34,5 +39,19 @@ def test_insufficient_category_raises() -> None:
         select_rows(rows)
     except ValueError as exc:
         assert "not enough BASE" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_parse_allocation_supports_sixty_four_probe_layout() -> None:
+    assert parse_allocation("BASE=6,HARD=4,TOOL=6") == {
+        "BASE": 6,
+        "HARD": 4,
+        "TOOL": 6,
+    }
+    try:
+        parse_allocation("BASE=0")
+    except ValueError as exc:
+        assert "positive" in str(exc)
     else:
         raise AssertionError("expected ValueError")

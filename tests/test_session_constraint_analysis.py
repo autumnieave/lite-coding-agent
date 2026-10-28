@@ -125,3 +125,37 @@ def test_code_only_retention_counts_as_semantic_loss() -> None:
     assert behavior["final_code_rate"] == 1.0
     assert behavior["final_semantic_rate"] == 0.0
     assert summary["classification"]["text_lost"] == 1
+
+
+def test_summarize_reports_v5_and_v6_against_baseline() -> None:
+    records = [
+        record(
+            condition="baseline",
+            mode="untagged",
+            target_present=True,
+            behavior_present=True,
+            behavior_compliant=False,
+            information_compliant=False,
+        ),
+        record(
+            condition="v5",
+            mode="untagged",
+            target_present=True,
+            behavior_present=True,
+            behavior_compliant=None,
+            information_compliant=None,
+        ),
+        record(
+            condition="v6",
+            mode="untagged",
+            target_present=True,
+            behavior_present=True,
+            behavior_compliant=True,
+            information_compliant=True,
+        ),
+    ]
+    summary = summarize(flatten(records))
+    assert set(summary["conditions"]) == {"baseline", "v5", "v6"}
+    assert summary["conditions"]["v6"]["untagged"]["compliant"] == 2
+    assert summary["baseline_vs_v6"]["untagged"]["strict_compliance_rate_delta"] == 1.0
+    assert summary["baseline_vs_v5"]["untagged"]["strict_compliance_rate_delta"] == 0.0

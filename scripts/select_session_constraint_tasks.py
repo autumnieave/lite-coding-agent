@@ -19,6 +19,7 @@ from typing import Any
 DEFAULT_POOL = Path("private/grpo_middle_pool/prompts.jsonl")
 DEFAULT_OUT = Path("private/session_constraint/tasks.json")
 ALLOCATION = {"BASE": 3, "HARD": 2, "TOOL": 3}
+ALLOCATION_64 = {"BASE": 6, "HARD": 4, "TOOL": 6}
 SELECTION_VERSION = "session-constraint-selection-v1"
 
 
@@ -44,6 +45,28 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def stable_key(task_id: str) -> str:
     return hashlib.sha256(f"{SELECTION_VERSION}:{task_id}".encode()).hexdigest()
+
+
+def parse_allocation(value: str) -> dict[str, int]:
+    """Parse ``BASE=6,HARD=4,TOOL=6`` into a category allocation."""
+    allocation: dict[str, int] = {}
+    for item in value.split(","):
+        name, separator, raw_count = item.partition("=")
+        category = name.strip().upper()
+        if not separator or not category or not raw_count.strip():
+            raise ValueError(f"invalid allocation item: {item!r}")
+        try:
+            count = int(raw_count)
+        except ValueError as exc:
+            raise ValueError(f"invalid allocation count: {item!r}") from exc
+        if count <= 0:
+            raise ValueError(f"allocation count must be positive: {item!r}")
+        if category in allocation:
+            raise ValueError(f"duplicate allocation category: {category}")
+        allocation[category] = count
+    if not allocation:
+        raise ValueError("allocation must not be empty")
+    return allocation
 
 
 def select_rows(
@@ -73,17 +96,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="select session-constraint probe tasks")
     parser.add_argument("--pool", type=Path, default=DEFAULT_POOL)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument(
+        "--allocation",
+        default=None,
+        help="optional category allocation, e.g. BASE=6,HARD=4,TOOL=6",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     rows = load_jsonl(args.pool)
-    selected = select_rows(rows)
+    allocation = parse_allocation(args.allocation) if args.allocation else ALLOCATION
+    selected = select_rows(rows, allocation=allocation)
     payload = {
         "version": SELECTION_VERSION,
         "source_pool": {"path": str(args.pool), "sha256": sha256(args.pool), "rows": len(rows)},
-        "allocation": dict(ALLOCATION),
+        "allocation": dict(allocation),
         "rule": "stratified by category, stable SHA-256(version:task_id) order",
         "tasks": selected,
     }

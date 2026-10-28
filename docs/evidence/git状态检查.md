@@ -98,3 +98,7 @@
 4. 关键结果文档必须进 Git；
 5. 提交前测试与 lint 全绿，不提交密钥与本机绝对路径；
 6. 不 force push、不改写已推送历史。
+
+## 8. v2.0 tag 口径（2026-10-28）
+
+public tag v2.0 = 014a9a4（public 首发）、private tag v2.0 = 45abb02（private 对应版本）、后续 commit 2711d7b 及补 A/B 不移动 tag——tag 是版本锚点，修正在 main 上可追溯。

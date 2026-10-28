@@ -39,6 +39,7 @@ SUMMARIZE_RATIO = 0.75
 KEEP_RECENT = 4
 FILLER_PAIRS = 12
 FILLER_REPEAT = 25
+MAX_TASKS = 16
 BASE_SEED = 20261026
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 MUTATING_TOOLS = {"edit_file", "write_file"}
@@ -489,7 +490,7 @@ async def run_condition(
                     model.generate,
                     request,
                     tools=None,
-                    adapter_enabled=condition == "sft",
+                    adapter_enabled=condition != "baseline",
                     max_new_tokens=summary_max_tokens,
                 )
                 captured["raw_summary"] = content
@@ -536,7 +537,7 @@ async def run_condition(
                         model.generate,
                         probe_messages,
                         tools=tool_specs,
-                        adapter_enabled=condition == "sft",
+                        adapter_enabled=condition != "baseline",
                         max_new_tokens=probe_max_tokens,
                     )
                     item["probe"] = {
@@ -568,7 +569,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--adapter-path", type=Path, default=None)
     parser.add_argument("--tasks", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--condition", choices=("baseline", "sft", "both"), default="both")
+    parser.add_argument(
+        "--condition",
+        choices=("baseline", "sft", "v5", "v6", "both"),
+        default="both",
+    )
     parser.add_argument("--workspace", type=Path, default=None)
     parser.add_argument("--max-model-len", type=int, default=8192)
     parser.add_argument("--summary-max-tokens", type=int, default=512)
@@ -580,8 +585,8 @@ def build_parser() -> argparse.ArgumentParser:
 async def main_async(args: argparse.Namespace) -> int:
     payload = load_json(args.tasks)
     tasks = payload.get("tasks") or []
-    if not 5 <= len(tasks) <= 10:
-        raise ValueError(f"expected 5-10 tasks, got {len(tasks)}")
+    if not 5 <= len(tasks) <= MAX_TASKS:
+        raise ValueError(f"expected 5-{MAX_TASKS} tasks, got {len(tasks)}")
     scenarios = [build_scenario(row, index) for index, row in enumerate(tasks)]
     workspace = args.workspace or (args.out_dir / "workspace")
     build_workspace(workspace, scenarios)
@@ -596,8 +601,8 @@ async def main_async(args: argparse.Namespace) -> int:
     conditions = ("baseline", "sft") if args.condition == "both" else (args.condition,)
     results = []
     for condition in conditions:
-        if condition == "sft" and args.adapter_path is None:
-            raise ValueError("--adapter-path is required for the sft condition")
+        if condition not in {"baseline", "both"} and args.adapter_path is None:
+            raise ValueError(f"--adapter-path is required for the {condition} condition")
         result = await run_condition(
             condition,
             model=model,
