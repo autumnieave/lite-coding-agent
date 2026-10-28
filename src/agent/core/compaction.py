@@ -528,10 +528,10 @@ class Compactor:
             self._constraints.save()
 
     def ensure_constraints(self, summary: str) -> tuple[str, int]:
-        """校验摘要是否漏掉约束，漏了就按原文补录。返回（摘要, 补回条数）。"""
+        """校验摘要是否漏掉约束 ID 或正文，漏了就按原文补录。"""
         if self._constraints is None:
             return summary, 0
-        missing = self._constraints.verify(summary).missing
+        missing = self._constraints.verify(summary, require_body=True).missing
         if not missing:
             return summary, 0
         return replenish_constraints(summary, missing), len(missing)

@@ -120,9 +120,9 @@ async def test_replenished_block_sits_after_the_summary_body() -> None:
 
 @pytest.mark.asyncio
 async def test_only_the_missing_ones_are_replenished() -> None:
-    """摘要写下了 C1~C6，只该补 C7~C10。"""
+    """摘要完整写下 C1~C6，只该补 C7~C10。"""
     kept = TEN[:6]
-    reply = "摘要：" + "".join(f"保留了 {code}。" for code, _ in kept)
+    reply = "摘要：" + "".join(f"[{code}] {content}" for code, content in kept)
     result, compactor = await _compact(reply)
 
     block = _summary_block(result)
@@ -136,7 +136,7 @@ async def test_only_the_missing_ones_are_replenished() -> None:
 @pytest.mark.asyncio
 async def test_a_single_missing_constraint_is_still_caught() -> None:
     """只漏 1 条也要补，且只补那 1 条。"""
-    reply = "摘要：" + "".join(f"保留了 {code}。" for code, _ in TEN[:-1])
+    reply = "摘要：" + "".join(f"[{code}] {content}" for code, content in TEN[:-1])
     result, compactor = await _compact(reply)
 
     block = _summary_block(result)
@@ -153,7 +153,7 @@ async def test_a_single_missing_constraint_is_still_caught() -> None:
 @pytest.mark.asyncio
 async def test_a_complete_summary_is_not_touched() -> None:
     """10 条都在时，摘要正文一个字都不该改。"""
-    reply = "摘要：" + "".join(f"保留了 {code}。" for code, _ in TEN)
+    reply = "摘要：" + "".join(f"[{code}] {content}" for code, content in TEN)
     result, compactor = await _compact(reply)
 
     block = _summary_block(result)
@@ -162,13 +162,15 @@ async def test_a_complete_summary_is_not_touched() -> None:
 
 
 @pytest.mark.asyncio
-async def test_verification_is_id_based_not_content_based() -> None:
-    """已知边界：id 在就算在。模型把正文写歪，这一层抓不到。"""
+async def test_verification_replenishes_when_body_is_missing() -> None:
+    """id 在但正文被改写时，按正文缺失处理并补录。"""
     reply = "摘要：" + "".join(f"{code} 的内容我改写了。" for code, _ in TEN)
     result, compactor = await _compact(reply)
 
-    assert compactor.stats.replenished == 0
+    assert compactor.stats.replenished == len(TEN)
     assert "我改写了" in _summary_block(result)
+    for code, content in TEN:
+        assert f"- [{code}] {content}" in _summary_block(result)
 
 
 # ---------- 边界 ----------

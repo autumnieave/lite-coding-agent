@@ -261,12 +261,18 @@ class ConstraintStore:
     def get(self, constraint_id: str) -> Constraint | None:
         return self._items.get(constraint_id)
 
-    def verify(self, text: str) -> Verification:
-        """检查文本（通常是摘要）里是否还包含每条约束的 id。"""
+    def verify(self, text: str, *, require_body: bool = False) -> Verification:
+        """检查文本（通常是摘要）里是否还保留每条约束。
+
+        默认只校验 id，保持既有调用方的兼容性。`require_body=True` 时还要求
+        约束正文仍在文本里；正文比较忽略空白差异，但不做语义等价判断。
+        """
         present: list[Constraint] = []
         missing: list[Constraint] = []
+        normalized_text = re.sub(r"\s+", "", text)
         for item in self.get_all():
-            (present if item.id in text else missing).append(item)
+            body_present = not require_body or re.sub(r"\s+", "", item.content) in normalized_text
+            (present if item.id in text and body_present else missing).append(item)
         return Verification(present=tuple(present), missing=tuple(missing))
 
     def blocking_for(self, *tool_names: str) -> Constraint | None:

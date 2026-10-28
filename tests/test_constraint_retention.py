@@ -114,18 +114,28 @@ def test_ensure_constraints_without_a_store_is_a_noop() -> None:
 def test_ensure_constraints_leaves_a_complete_summary_alone() -> None:
     store = _store(*THREE)
     compactor = Compactor(_config(), constraints=store)
-    text = "摘要：" + "、".join(code for code, _ in THREE)
+    text = "摘要：" + "；".join(f"[{code}] {content}" for code, content in THREE)
     assert compactor.ensure_constraints(text) == (text, 0)
+
+
+def test_ensure_constraints_replenishes_when_body_is_missing() -> None:
+    store = _store(*THREE)
+    compactor = Compactor(_config(), constraints=store)
+    text = "摘要：[R3MJUD]（正文省略）；[C5] 禁止修改数据库迁移文件；[PY39] 必须兼容 Python 3.9"
+    healed, replenished = compactor.ensure_constraints(text)
+    assert replenished == 1
+    assert REPLENISH_HEADING in healed
+    assert "- [R3MJUD] 输出必须是合法 JSON" in healed
 
 
 def test_ensure_constraints_appends_the_missing_ones() -> None:
     store = _store(*THREE)
     compactor = Compactor(_config(), constraints=store)
     healed, replenished = compactor.ensure_constraints("摘要：只提到了 R3MJUD")
-    assert replenished == 2
+    assert replenished == 3
     assert REPLENISH_HEADING in healed
     assert healed.startswith("摘要：只提到了 R3MJUD")
-    for code, content in (("C5", "禁止修改数据库迁移文件"), ("PY39", "必须兼容 Python 3.9")):
+    for code, content in THREE:
         assert f"- [{code}] {content}" in healed
 
 
@@ -149,32 +159,29 @@ async def test_tier4_hands_the_constraint_list_to_the_summarizer() -> None:
 
 @pytest.mark.asyncio
 async def test_tier4_self_heals_a_summary_that_dropped_constraints() -> None:
-    """核心用例：模型摘要只留下一条约束，压缩后仍必须三条齐全。"""
+    """核心用例：模型摘要只留下 id，压缩后仍必须三条正文齐全。"""
     store = _store(*THREE)
     recorder = _Recorder("摘要：保留了 R3MJUD 这条约束。")
     compactor = Compactor(_config(), summarize=recorder, constraints=store)
     result = await compactor.compact(_filler(20, size=4000))
 
     block = _summary_block(result)
-    for code, _ in THREE:
-        assert code in block, f"{code} 应当仍在上下文里"
-    # 模型自己写下的那条只保证 id 在；补录的两条连正文一起回来
-    for code, content in (("C5", "禁止修改数据库迁移文件"), ("PY39", "必须兼容 Python 3.9")):
+    for code, content in THREE:
         assert f"- [{code}] {content}" in block
     assert REPLENISH_HEADING in block
     assert compactor.stats.counts[TIER4] == 1
 
 
 @pytest.mark.asyncio
-async def test_verification_is_id_based_so_garbled_content_is_not_detected() -> None:
-    """已知边界：校验认的是 id。模型写了 id 却把正文写歪，这一层抓不到。"""
+async def test_verification_replenishes_when_body_is_garbled() -> None:
+    """id 在但正文写歪时，也按正文缺失处理并补录。"""
     store = _store(*THREE)
     reply = "摘要：R3MJUD、C5、PY39 三条都在，但 R3MJUD 的具体要求记成了别的意思。"
     compactor = Compactor(_config(), summarize=_Recorder(reply), constraints=store)
     result = await compactor.compact(_filler(20, size=4000))
     block = _summary_block(result)
-    assert REPLENISH_HEADING not in block, "id 在就视为保留，不会补录"
-    assert "输出必须是合法 JSON" not in block
+    assert REPLENISH_HEADING in block
+    assert "输出必须是合法 JSON" in block
 
 
 @pytest.mark.asyncio
@@ -182,13 +189,15 @@ async def test_tier4_event_reports_how_many_were_replenished() -> None:
     store = _store(*THREE)
     compactor = Compactor(_config(), summarize=_Recorder("摘要：只说了 R3MJUD"), constraints=store)
     await compactor.compact(_filler(20, size=4000))
-    assert "补回 2 条约束" in compactor.stats.events[-1].detail
+    assert "补回 3 条约束" in compactor.stats.events[-1].detail
 
 
 @pytest.mark.asyncio
 async def test_tier4_does_not_touch_a_complete_summary() -> None:
     store = _store(*THREE)
-    reply = "摘要：R3MJUD、C5、PY39 均已保留。"
+    reply = (
+        "摘要：R3MJUD=输出必须是合法 JSON；C5=禁止修改数据库迁移文件；PY39=必须兼容 Python 3.9。"
+    )
     compactor = Compactor(_config(), summarize=_Recorder(reply), constraints=store)
     result = await compactor.compact(_filler(20, size=4000))
     assert _summary_block(result).endswith(reply)

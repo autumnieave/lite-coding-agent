@@ -239,6 +239,22 @@ def test_verify_all_present_is_ok() -> None:
     assert result.missing == ()
 
 
+def test_verify_require_body_rejects_id_only_summary() -> None:
+    store = _store()
+    store.add("输出必须是合法 JSON", constraint_id="R3MJUD")
+    result = store.verify("摘要只提到了 R3MJUD。", require_body=True)
+    assert result.present == ()
+    assert [item.id for item in result.missing] == ["R3MJUD"]
+
+
+def test_verify_require_body_accepts_whitespace_variant() -> None:
+    store = _store()
+    store.add("输出必须是合法 JSON", constraint_id="R3MJUD")
+    result = store.verify("R3MJUD：输出必须是合法JSON", require_body=True)
+    assert result.ok is True
+    assert [item.id for item in result.present] == ["R3MJUD"]
+
+
 def test_verify_without_constraints_is_ok() -> None:
     result = _store().verify("随便什么摘要")
     assert result.ok is True
