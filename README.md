@@ -122,7 +122,7 @@ lite-coding-agent/
 
 ## 边界与未覆盖
 
-- 主实验四组对比未启动：S1 prompt 自检负收益（valid stable 15→20、task_success 40/110→10/110），预注册门禁未满足。
+- 主实验四组对比未启动：S1 prompt 自检负收益（valid stable 15→20、task_success 40/110→10/110），按预设门槛不启动。
 
 - GRPO 未启动：预检判定 SFT 已饱和，无梯度信号。
 
