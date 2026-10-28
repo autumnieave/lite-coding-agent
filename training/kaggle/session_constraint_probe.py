@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.core.compaction import SUMMARY_PREFIX, CompactionConfig, Compactor
-from agent.core.constraints import CONSTRAINT_MARKER, ConstraintStore
+from agent.core.constraints import CONSTRAINT_MARKER, ConstraintStore, Verification
 from agent.core.llm import assistant_message, system_message, user_message
 from agent.tools import build_default_registry
 from training.kaggle.local_prompt import build_chat_prompt
@@ -39,7 +39,7 @@ SUMMARIZE_RATIO = 0.75
 KEEP_RECENT = 4
 FILLER_PAIRS = 12
 FILLER_REPEAT = 25
-MAX_TASKS = 16
+MAX_TASKS = 32
 BASE_SEED = 20261026
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 MUTATING_TOOLS = {"edit_file", "write_file"}
@@ -85,6 +85,13 @@ class ConstraintSpec:
     violation: str
     probe_path: str
     target_path: str | None = None
+
+
+class LegacyConstraintStore(ConstraintStore):
+    """Replay the pre-fix verifier: IDs count as retained even without body text."""
+
+    def verify(self, text: str, *, require_body: bool = False) -> Verification:
+        return super().verify(text, require_body=False)
 
 
 def sha256(path: Path) -> str:
@@ -146,6 +153,12 @@ def build_scenario(row: Mapping[str, Any], index: int) -> dict[str, Any]:
         "other_file": other,
         "constraints": [behavior, information],
     }
+
+
+def id_only_summary(scenario: Mapping[str, Any]) -> str:
+    """Deterministic compression summary that keeps IDs but drops every body."""
+
+    return "关键约束：\n" + "\n".join(f"- {spec.code}" for spec in scenario["constraints"])
 
 
 def declaration(scenario: Mapping[str, Any], *, tagged: bool) -> str:
@@ -466,7 +479,12 @@ async def run_condition(
     out_path: Path,
     summary_max_tokens: int,
     probe_max_tokens: int,
+    modes: Sequence[str] = ("untagged", "tagged"),
+    legacy_verify: bool = False,
+    summary_mode: str = "model",
 ) -> dict[str, Any]:
+    if summary_mode not in {"model", "id_only"}:
+        raise ValueError(f"unknown summary_mode: {summary_mode}")
     started = time.perf_counter()
     config = CompactionConfig(
         context_window=CONTEXT_WINDOW,
@@ -478,14 +496,23 @@ async def run_condition(
     rows: list[dict[str, Any]] = []
     for index, row in enumerate(tasks):
         scenario = build_scenario(row, index)
-        for mode in ("untagged", "tagged"):
+        for mode in modes:
             messages = build_messages(scenario, tagged=mode == "tagged")
             captured: dict[str, str] = {}
-            store = ConstraintStore() if mode == "tagged" else None
+            forced_summary = id_only_summary(scenario) if summary_mode == "id_only" else None
+            store: ConstraintStore | None = ConstraintStore() if mode == "tagged" else None
+            if store is not None and legacy_verify:
+                store = LegacyConstraintStore()
 
             async def summarize(
-                request: Sequence[Mapping[str, Any]], captured: dict[str, str] = captured
+                request: Sequence[Mapping[str, Any]],
+                captured: dict[str, str] = captured,
+                forced: str | None = forced_summary,
             ) -> str:
+                if forced is not None:
+                    content = forced
+                    captured["raw_summary"] = content
+                    return content
                 content, _, _ = await asyncio.to_thread(
                     model.generate,
                     request,
@@ -512,6 +539,8 @@ async def run_condition(
                 "tier_counts": tiers,
                 "tier4_triggered": tier4_triggered,
                 "replenished": compactor.stats.replenished,
+                "summary_mode": summary_mode,
+                "legacy_verify": legacy_verify,
                 "raw_summary": raw_summary,
                 "final_context": final_text[-8000:],
                 "constraints": [],

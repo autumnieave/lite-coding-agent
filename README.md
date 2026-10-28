@@ -7,7 +7,7 @@ Agent 约束遵守实验平台——违反归因、可复现评测与训练侧�
 
 ## 核心发现
 
-- 约束层：原文在 ≠ 行为生效。自研约束独立存储 + 双路注入 + 补录，压力档（deepseek-flash）违规 19→5；但 Qwen2.5-7B 基座 32 条探针仅 12/32 合规，train-v5 SFT 11/32、train-v6 SFT 28/32（小样本、方向性）。补录已改为 ID+正文校验，但 untagged 模式不创建 ConstraintStore，修复效果未验证。证据见 docs/evidence/。
+- 约束层：原文在 ≠ 行为生效。自研约束独立存储 + 双路注入 + 约束补录，压力档（deepseek-flash）违规 19→5；但 Qwen2.5-7B 基座 32 条探针仅 12/32 合规，train-v5 SFT 11/32、train-v6 SFT 28/32（小样本、方向性）。补录已由仅校验 ID 改为 ID+正文；tagged 故障注入（强制 ID-only 摘要）下语义保留 0/64→64/64、合规 17/64→64/64；untagged 不创建 ConstraintStore、补录路径不可达，历史三组数字保留。证据见 docs/evidence/。
 
 - 工具层：Tool-Calling Agent Loop + 6 工具（Pydantic 参数校验 + 路径越界拦截），edit_file 三道防线（read-before-edit / mtime 防护 / old_string 唯一性）；幂等键 + checkpoint 恢复，单进程 stdio-only；benchmark 48 次运行（on 36/off 12）的 466 次工具调用参数 JSON 全合法、路径越界 0 次。代码见 src/agent/，测试见 tests/。
 
@@ -131,7 +131,7 @@ lite-coding-agent/
 
 - 会话约束 adapter 对比为 16 任务 × 64 条探针、1 rollout，未做显著性检验，任务仍在训练重叠池，不能当 clean held-out 泛化证据。
 
-- 补录修复在 tagged 路径可达、untagged 不创建 ConstraintStore——系统侧修复与行为层改善是两条路径；本轮行为探针未覆盖修复效果，修复效果未验证。
+- 补录修复验证限于 tagged 故障注入（强制 ID-only 摘要，64 条、1 rollout、未做显著性检验）：语义保留 0/64→64/64、合规 17/64→64/64；untagged 不创建 ConstraintStore、补录路径不可达；自然摘要未重测。
 
 下一步：验证跨模板泛化与 constrained decoding 多后端。
 
