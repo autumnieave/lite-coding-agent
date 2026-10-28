@@ -8,13 +8,13 @@ Agent 约束遵守实验平台——违反归因、可复现评测与训练侧�
 
 ## 核心发现
 
-- 约束层：原文在 ≠ 行为生效。自研约束独立存储 + 双路注入 + 补录，压力档（deepseek-flash）违规 19→5；但 Qwen2.5-7B 默认注入下 64 条约束中行为探针仅 23 条合规（小样本），定位补录仅校验 ID、未校验正文——系统侧可保证原文与补录完整性，行为生效需训练侧补。证据见 docs/evidence/。
+- 约束层：原文在 ≠ 行为生效。自研约束独立存储 + 双路注入 + 补录，压力档（deepseek-flash）违规 19→5；但 Qwen2.5-7B 基座 32 条探针仅 12/32 合规，train-v5 SFT 11/32、train-v6 SFT 28/32（小样本、方向性）。补录已改为 ID+正文校验，但 untagged 模式不创建 ConstraintStore，修复效果未验证。证据见 docs/evidence/。
 
 - 工具层：Tool-Calling Agent Loop + 6 工具（Pydantic 参数校验 + 路径越界拦截），edit_file 三道防线（read-before-edit / mtime 防护 / old_string 唯一性）；幂等键 + checkpoint 恢复，单进程 stdio-only；benchmark 48 次运行（on 36/off 12）的 466 次工具调用参数 JSON 全合法、路径越界 0 次。代码见 src/agent/，测试见 tests/。
 
 - 评测层：同一任务跑 10 次，3.57% 判定翻转（560 配对）→ 单次不可信。45 个去重叠任务上，SFT 单次通过率 49.4% → 99.8%（+50.3pp，McNemar p<1e-13），pass^10（10 次全过）SFT 达 44/45。证据见 docs/evidence/。
 
-- 训练层：7B SFT 首跑 BASE 0/30 全灭 → Trace 定位训练/推理模板不一致（307→1567 token）→ 修复后 30/30（pipeline 修复，非模型能力增益）；full-loss 致长上下文任务通过数 0/10，assistant-only Loss Masking 恢复 10/10。API/本地 99.8%/90.9%，差异主要来自输出格式。证据见 docs/evidence/。
+- 训练层：7B SFT 首跑 BASE 0/30 全灭 → Trace 定位训练/推理模板不一致（307→1567 token）→ 修复后 30/30（pipeline 修复，非模型能力增益）；full-loss 致长上下文任务通过数 0/10，assistant-only Loss Masking 恢复 10/10。API/本地 99.8%/90.9%，差异主要来自输出格式。同一批 32 条约束探针的 adapter 对比：train-v5 11/32、train-v6 28/32（基座 12/32；小样本、方向性）。证据见 docs/evidence/。
 
 - 决策层：能启动 ≠ 该启动。GRPO 预检 360 条 rollout（45 任务 × 8 次）：44/45 已全对、存在部分成功/中间态信号的任务为 0——按预注册判据（中间态为 0 则不启动），不做全量 RL。证据见 docs/evidence/。
 
@@ -129,6 +129,10 @@ lite-coding-agent/
 - Token 三段归因（69.9% 来自工具返回）属运行时优化，未做截断对照；见 `docs/evidence/Token三段归因.md`。
 
 - 同族非跨模板：任务池按审计口径有 6 个模板族（public_grep、conflict、path_params、json_constraints、constraint_edit、context_recall）；45 个 clean 任务覆盖其中 4 个（public_grep、json_constraints、constraint_edit、path_params），另有 2 条 json_file，+50.3pp 不可外推到“没见过的任务族”；409 任务池中 394 个来自 train-v5，用训练集做难度筛选是为了找 SFT 中间态。
+
+- 会话约束 adapter 对比仅 32 条探针、未做显著性检验，任务仍在训练重叠池，不能当 clean held-out 泛化证据。
+
+- 补录修复在 untagged 模式下不可达（该模式不创建 ConstraintStore）；修复代码对 tagged 路径生效，但本轮探针未覆盖——修复效果未验证。
 
 下一步：验证跨模板泛化与 constrained decoding 多后端。
 

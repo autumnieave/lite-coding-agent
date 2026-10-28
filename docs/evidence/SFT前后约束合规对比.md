@@ -12,6 +12,18 @@
 旧报告中的 `23/64` 不是 baseline 单组合规数。`会话约束三处查.csv` 的
 baseline 单组为 `12/32` 合规，SFT（train-v5）为 `11/32` 合规；
 两者合计 `23/64`，旧报告进一步以语义保留的 `59` 条为分母，写成 `23/59`。  
+三组数字的实际口径如下：
+
+| 组 | adapter | 合规 | 违反 | 只读/未分类 | 合计 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| baseline | 禁用 adapter 的 Qwen2.5-7B | 12 | 17 | 3 | 32 |
+| SFT（旧） | train-v5 `f5b685d4...` | 11 | 1 | 20 | 32 |
+| SFT（新） | train-v6 `37928a28...` | 28 | 0 | 4 | 32 |
+
+`23/64 = 12/32 + 11/32` 是 baseline 与 train-v5 SFT 合并的旧口径，已废弃；
+不能和新 train-v6 的 `28/32` 混写。两个 SFT 是同一批探针、同一判定规则下的
+两次 adapter 实验，不是同一个 adapter。
+
 本次新跑仍为 32 对配对，但 baseline 与 SFT 都使用 train-v6 adapter：
 baseline 加载 adapter 后调用 `disable_adapter()`（基座模型），SFT 启用 adapter。
 
