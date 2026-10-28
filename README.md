@@ -128,7 +128,7 @@ lite-coding-agent/
 
 - Token 三段归因（69.9% 来自工具返回）属运行时优化，未做截断对照；见 `docs/evidence/Token三段归因.md`。
 
-- 同族非跨模板：45 个 clean 任务仍与 train 同模板，+50.3pp 不可外推到“没见过的任务族”。
+- 同族非跨模板：45 个 clean 任务覆盖 5 个任务族（public_grep、json_constraints、constraint_edit、path_params、json_file），仍与 train 同模板，+50.3pp 不可外推到“没见过的任务族”；409 任务池中 394 个来自 train-v5，用训练集做难度筛选是为了找 SFT 中间态。
 
 下一步：验证跨模板泛化与 constrained decoding 多后端。
 
