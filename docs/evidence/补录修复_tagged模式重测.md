@@ -27,6 +27,19 @@
 untagged 历史数据没有改动；它是“不创建 ConstraintStore、系统不管约束”的对照组。
 本轮只跑 tagged，不代表 untagged 也会有补录收益。
 
+### 判定与可比性
+
+- 修复前后使用同一 `retention_for`、`classify_probe` 和 `build_probe_messages`。
+- tagged 与 untagged 的语义判定、违规判定和强制选择探针相同；差异是 tagged 用
+  `[CONSTRAINT] 代号` 并创建 `ConstraintStore`，untagged 用普通列表且无 store。
+  两者声明都在 user message，不是 system prompt 最前面。
+- 修复前 17/64 的失败是混合的：行为规则 `16` 合规 / `16` 未分类
+  (`confirmed` / `deferred_tool`)，信息约束 `1` 合规 / `31` 违反
+  (`executed_violation`)。
+- 旧自然摘要 train-v6 的 `53/64` 是 tagged + untagged 合计（untagged `28/32`、
+  自然 tagged `25/32`），不是 untagged-only；与本次 tagged 故障注入 `17/64`
+  不可直接比较。
+
 ## 2. 修复前后结果
 
 | 指标 | 修复前 | 修复后 | 变化 |
@@ -58,9 +71,10 @@ untagged 历史数据没有改动；它是“不创建 ConstraintStore、系统�
 
 ## 3. 判定
 
-补录缺陷是这批 tagged 故障注入下行为不合规的部分原因：修复前摘要只剩 ID，旧实现
-认为约束仍在，不触发补录；修复后正文被补回，信息约束的目标路径和行为规则的禁止
-语义都恢复，64 条行为探针全部转为合规。
+补录缺陷是这批 tagged 故障注入下 31 条信息约束违反的直接原因：修复前摘要只剩 ID，
+旧实现认为约束仍在，不触发补录；修复后正文被补回，信息约束的目标路径和行为规则的
+禁止语义都恢复，64 条行为探针全部转为合规。在这个故障注入内对照里，ID+正文校验
+完整恢复了系统侧补录链。
 
 这支持“补录修复在 tagged 路径上可达且有效”，不支持“补录修复能改善 untagged 行为”，
 也不支持“SFT 单独解决了约束遵守”。untagged 模式不创建 ConstraintStore，补录路径
