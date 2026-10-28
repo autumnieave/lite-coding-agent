@@ -46,7 +46,7 @@ D-->E[决策层<br/>能启动≠该启动]
 Python 3.11+，需支持工具调用的 LLM（Claude/GPT-4o/DeepSeek）。
 
 ```bash
-git clone https://github.com/autumnieave/lite-coding-agent-private.git lite-coding-agent
+git clone https://github.com/autumnieave/lite-coding-agent.git lite-coding-agent
 cd lite-coding-agent && python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
@@ -55,8 +55,6 @@ export LLM_API_KEY="..." LLM_BASE_URL="..." LLM_MODEL="..."
 lite-agent chat "列出当前目录"
 lite-agent chat "列出当前目录" --verbose
 ```
-
-> 完整地址：github.com/autumnieave/lite-coding-agent
 
 配置：环境变量 > .env；退出码 0/1/2 = 成功/失败/配置错误。示例见 `docs/usage.md`，完整参数见 `lite-agent --help`。
 
