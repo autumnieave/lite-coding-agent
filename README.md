@@ -12,11 +12,11 @@ Agent 约束遵守实验平台——违反归因、可复现评测与训练侧�
 
 - 工具层：Tool-Calling Agent Loop + 6 工具（Pydantic 参数校验 + 路径越界拦截），edit_file 三道防线（read-before-edit / mtime 防护 / old_string 唯一性）；幂等键 + checkpoint 恢复，单进程 stdio-only。代码见 src/agent/，测试见 tests/。
 
-- 评测层：同一任务跑 10 次，3.57% 判定翻转（560 配对）→ 单次不可信。45 个去重叠任务上，SFT 单次通过率 49.4% → 99.8%（+50.3pp，McNemar p<1e-13），pass^10（10 次全过）从 0/45（推断）到 44/45。证据见 docs/evidence/。
+- 评测层：同一任务跑 10 次，3.57% 判定翻转（560 配对）→ 单次不可信。45 个去重叠任务上，SFT 单次通过率 49.4% → 99.8%（+50.3pp，McNemar p<1e-13），pass^10（10 次全过）SFT 达 44/45。证据见 docs/evidence/。
 
 - 训练层：7B SFT 首跑 BASE 0/30 全灭 → Trace 定位训练/推理模板不一致（307→1567 token）→ 修复后 30/30；full-loss 致 CTX-HARD 0/10，assistant-only Loss Masking 恢复 10/10。API/本地 99.8%/90.9%，优势在格式。证据见 docs/evidence/。
 
-- 决策层：能启动 ≠ 该启动。GRPO 正确预检 360 条 rollout（45 任务 × 8 次）：44/45 已全对、中间态 0——按预注册判据（中间态为 0 则不启动），不做全量 RL。证据见 docs/evidence/。
+- 决策层：能启动 ≠ 该启动。GRPO 预检 360 条 rollout（45 任务 × 8 次）：44/45 已全对、中间态 0——按预注册判据（中间态为 0 则不启动），不做全量 RL。证据见 docs/evidence/。
 
 ```mermaid
 flowchart LR
@@ -46,7 +46,7 @@ D-->E[决策层<br/>能启动≠该启动]
 Python 3.11+，需支持工具调用的 LLM（Claude/GPT-4o/DeepSeek）。
 
 ```bash
-git clone git@github.com:autumnieave/lite-coding-agent.git lite-coding-agent
+git clone https://github.com/autumnieave/lite-coding-agent-private.git lite-coding-agent
 cd lite-coding-agent && python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
@@ -112,13 +112,13 @@ lite-coding-agent/
 | 指标 | baseline | SFT |
 |---|---:|---:|
 | pass@1（单次通过率） | 49.4% | 99.8%（+50.3pp，McNemar p<1e-13） |
-| pass^10（10 次全过） | 0/45（推断） | 44/45 |
+| pass^10（10 次全过） | 0/45（外推） | 44/45 |
 
-> 项目门禁另设 ≥6/10 多数阈值（10 次中至少 6 次通过记稳定通过），对应 SFT 45/45；baseline 仅 8 次观测，无法计算该口径。pass^10 是更严格的可靠性下界，生产环境通常看这个。
+>  baseline 仅 8 次观测：pass^10 的 0/45 是外推值（每任务最多成功 5/8，10 次全过逻辑上不可能）。pass^10 是更严格的可靠性下界，生产环境通常看这个。
 
-45/45 一致；增益接近，排除记忆。
+重叠组 / 非重叠组增益一致（+50.5pp vs +50.0pp），排除逐字记忆。
 
-**复现**：train-v6 adapter 见 `private/kaggle_pull_clean_heldout_v1/clean_heldout/adapter/`（SHA-256 `37928a28...a4b96` 校验通过）；需 GPU ≥16GB。
+**复现**：train-v6 需自行重训（SHA 920a4ee7，100 steps，配置见 docs/evidence/训练管线验证.md）；adapter 本体不入库，需 GPU ≥16GB。
 
 ## 边界与未覆盖
 
