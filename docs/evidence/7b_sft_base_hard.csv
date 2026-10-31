@@ -1,0 +1,19 @@
+condition,category,scope,task_id,tasks,rollouts,valid_rollouts,task_success,task_success_rate,tool_results_ok,tool_results_total,tool_success_rate,raw_stable_checks,valid_stable_checks,within_steps_failures,note
+baseline,BASE,aggregate,,3,30,30,20,0.6667,40,50,0.8,3,3,0,
+baseline,HARD,aggregate,,3,30,30,20,0.6667,120,130,0.9231,1,1,0,
+baseline,OVERALL,aggregate,,6,60,60,40,0.6667,,,0.8889,4,4,0,
+baseline,HARD,task,U-TR-A-C1-HARD,1,10,10,0,0.0,0,10,0.0,1,1,0,路径被改写为 tuning/config_c1.ini，read_file 失败，value 为空
+baseline,BASE,task,U-TR-B-C1-BASE,1,10,10,10,1.0,10,10,1.0,0,0,0,
+baseline,BASE,task,U-TR-B-CHECK-BASE,1,10,10,10,1.0,20,30,0.6667,0,0,0,
+baseline,BASE,task,U-TR-B-CONFLICT-WEAK,1,10,10,0,0.0,10,10,1.0,3,3,0,未按约束写小写文件名/内容/理由
+baseline,HARD,task,U-TR-B-CTX-HARD,1,10,10,10,1.0,100,100,1.0,0,0,0,
+baseline,HARD,task,U-TR-B-TOOL-HARD,1,10,10,10,1.0,20,20,1.0,0,0,0,
+sft,BASE,aggregate,,3,30,30,0,0.0,80,80,1.0,8,8,0,
+sft,HARD,aggregate,,3,30,30,20,0.6667,140,140,1.0,1,1,0,
+sft,OVERALL,aggregate,,6,60,60,20,0.3333,,,1.0,9,9,0,
+sft,HARD,task,U-TR-A-C1-HARD,1,10,10,0,0.0,20,20,1.0,1,1,0,路径已修正且最终 JSON 正确，但 read_file 后额外调用 bash，tools_allowed 失败；无循环
+sft,BASE,task,U-TR-B-C1-BASE,1,10,10,0,0.0,10,10,1.0,4,4,0,第二轮输出畸形 <tool_call> name=oriously_set，json/keys/value 全失败
+sft,BASE,task,U-TR-B-CHECK-BASE,1,10,10,0,0.0,40,40,1.0,1,1,0,文件修改正确，但额外调用 grep/list_dir，tools_allowed 失败
+sft,BASE,task,U-TR-B-CONFLICT-WEAK,1,10,10,0,0.0,30,30,1.0,3,3,0,写成 Report.txt 而非小写，另加 bash/read，tools_allowed 失败
+sft,HARD,task,U-TR-B-CTX-HARD,1,10,10,10,1.0,100,100,1.0,0,0,0,
+sft,HARD,task,U-TR-B-TOOL-HARD,1,10,10,10,1.0,20,20,1.0,0,0,0,

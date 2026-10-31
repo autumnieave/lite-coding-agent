@@ -1,0 +1,35 @@
+{
+  "by_condition": {
+    "baseline:tagged": {
+      "body_fragment_absent": 0,
+      "compressed_true": 0,
+      "constraints": 16,
+      "semantic_absent": 0
+    },
+    "baseline:untagged": {
+      "body_fragment_absent": 0,
+      "compressed_true": 0,
+      "constraints": 16,
+      "semantic_absent": 0
+    },
+    "sft:tagged": {
+      "body_fragment_absent": 0,
+      "compressed_true": 0,
+      "constraints": 16,
+      "semantic_absent": 0
+    },
+    "sft:untagged": {
+      "body_fragment_absent": 10,
+      "compressed_true": 16,
+      "constraints": 16,
+      "semantic_absent": 5
+    }
+  },
+  "compressed_true": 16,
+  "constraints": 64,
+  "replenished_nonzero_runs": 0,
+  "runs": 32,
+  "runs_with_compressed_true": 8,
+  "runs_with_replenish_heading": 0,
+  "tier4_runs": 32
+}

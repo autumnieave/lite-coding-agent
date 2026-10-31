@@ -1,0 +1,13 @@
+condition,task_id,kind,rollouts,task_success,stable_checks,valid_stable_checks,within_steps_failures,tool_results_ok,tool_results_total
+awq,U-TR-A-C1-HARD,hard,10,0,1,1,0,0,10
+awq,U-TR-B-C1-BASE,base,10,0,1,1,0,0,10
+awq,U-TR-B-CHECK-BASE,base,10,10,0,0,0,20,20
+awq,U-TR-B-CONFLICT-WEAK,base,10,0,3,3,0,10,10
+awq,U-TR-B-CTX-HARD,hard,10,10,0,0,0,100,100
+awq,U-TR-B-TOOL-HARD,hard,10,0,1,1,0,20,20
+nf4,U-TR-A-C1-HARD,hard,10,0,1,1,0,0,10
+nf4,U-TR-B-C1-BASE,base,10,10,0,0,0,10,10
+nf4,U-TR-B-CHECK-BASE,base,10,10,0,0,0,20,30
+nf4,U-TR-B-CONFLICT-WEAK,base,10,0,3,3,0,10,10
+nf4,U-TR-B-CTX-HARD,hard,10,10,0,0,0,100,100
+nf4,U-TR-B-TOOL-HARD,hard,10,10,0,0,0,20,20

@@ -1,0 +1,19 @@
+condition,category,scope,task_id,tasks,rollouts,valid_rollouts,task_success,task_success_rate,tool_results_ok,tool_results_total,tool_success_rate,raw_stable_checks,valid_stable_checks,within_steps_failures,note
+baseline,BASE,aggregate,,3,30,30,10,0.3333,40,40,1.0,8,8,0,
+baseline,HARD,aggregate,,3,30,30,0,0.0,50,50,1.0,8,8,0,
+baseline,OVERALL,aggregate,,6,60,60,10,0.1667,,,1.0,16,16,0,
+baseline,HARD,task,U-TR-A-C1-HARD,1,10,10,0,0.0,10,10,1.0,5,5,0,
+baseline,BASE,task,U-TR-B-C1-BASE,1,10,10,0,0.0,10,10,1.0,5,5,0,
+baseline,BASE,task,U-TR-B-CHECK-BASE,1,10,10,10,1.0,20,20,1.0,0,0,0,
+baseline,BASE,task,U-TR-B-CONFLICT-WEAK,1,10,10,0,0.0,10,10,1.0,3,3,0,
+baseline,HARD,task,U-TR-B-CTX-HARD,1,10,10,0,0.0,20,20,1.0,2,2,0,
+baseline,HARD,task,U-TR-B-TOOL-HARD,1,10,10,0,0.0,20,20,1.0,1,1,0,
+sft,BASE,aggregate,,3,30,30,10,0.3333,60,60,1.0,6,6,0,
+sft,HARD,aggregate,,3,30,20,10,0.3333,190,190,1.0,6,2,10,
+sft,OVERALL,aggregate,,6,60,50,20,0.3333,,,1.0,12,8,10,
+sft,HARD,task,U-TR-A-C1-HARD,1,10,0,0,0.0,60,60,1.0,4,0,10,SFT 10/10 重复读 config_c1.ini 6 轮到 max_turns
+sft,BASE,task,U-TR-B-C1-BASE,1,10,10,0,0.0,20,20,1.0,4,4,0,SFT 最终输出残缺 tool-call 片段；no_fence 偶然通过
+sft,BASE,task,U-TR-B-CHECK-BASE,1,10,10,10,1.0,30,30,1.0,0,0,0,两组都稳定成功
+sft,BASE,task,U-TR-B-CONFLICT-WEAK,1,10,10,0,0.0,10,10,1.0,2,2,0,SFT 解释冲突但仍未写对文件名
+sft,HARD,task,U-TR-B-CTX-HARD,1,10,10,0,0.0,110,110,1.0,2,2,0,SFT 每次 11 次调用，读完仍答错
+sft,HARD,task,U-TR-B-TOOL-HARD,1,10,10,10,1.0,20,20,1.0,0,0,0,SFT 将 7+9 从 18 修正为 16

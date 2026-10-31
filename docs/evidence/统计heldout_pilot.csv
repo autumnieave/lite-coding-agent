@@ -1,0 +1,11 @@
+condition,task_id,family,difficulty,expected_rollouts,valid_rollouts,errors,task_success,pass_rate,variance,bernoulli_variance,within_steps_failures,stable_pass_6_of_10
+baseline,U-S15-01-EXTRACT-A,policy_extract,weak,10,10,0,0,0.0,0.0,0.0,0,False
+baseline,U-S15-04-SELECT-A,selective_aggregate,medium,10,10,0,0,0.0,0.0,0.0,0,False
+baseline,U-S15-07-SEARCH-A,search_collect,medium,10,10,0,0,0.0,0.0,0.0,0,False
+baseline,U-S15-10-EDIT-A,edit_verify,medium,10,10,0,0,0.0,0.0,0.0,0,False
+baseline,U-S15-13-AUDIT-A,audit_reconcile,strong,10,10,0,0,0.0,0.0,0.0,0,False
+sft,U-S15-01-EXTRACT-A,policy_extract,weak,10,10,0,0,0.0,0.0,0.0,0,False
+sft,U-S15-04-SELECT-A,selective_aggregate,medium,10,10,0,0,0.0,0.0,0.0,0,False
+sft,U-S15-07-SEARCH-A,search_collect,medium,10,10,0,0,0.0,0.0,0.0,0,False
+sft,U-S15-10-EDIT-A,edit_verify,medium,10,10,0,10,1.0,0.0,0.0,0,True
+sft,U-S15-13-AUDIT-A,audit_reconcile,strong,10,10,0,0,0.0,0.0,0.0,0,False

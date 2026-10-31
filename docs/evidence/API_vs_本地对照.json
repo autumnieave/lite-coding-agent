@@ -1,0 +1,1848 @@
+{
+  "version": "api-vs-local-ab-analysis-v2",
+  "generated_at": "2026-10-26T10:47:25+0800",
+  "task_manifest": {
+    "path": "private\\final_test_v3\\tasks.jsonl",
+    "sha256": "20e20b3beabaf0c48c00dae56d97c1aea356b1ac89c4cdb0fd9decc799c4fa5b",
+    "tasks": 45
+  },
+  "sources": {
+    "api_runs": {
+      "path": "private\\api_ab\\runs.jsonl",
+      "sha256": "80268b058e258f0af87f5be0be863cc28f1e58086aa7b3313a34f46fd3a9572c",
+      "summary_path": "private\\api_ab\\summary.json",
+      "summary_sha256": "b2fe168dfa03b4ebfa82336fad4b092e10747c47c98cc434d322cbf952a022f1"
+    },
+    "local_sft_runs": {
+      "path": "private\\kaggle_pull_clean_heldout_meta\\clean_heldout\\full\\sft\\runs.jsonl",
+      "sha256": "81aad73c6bf35cb54bf6699f5d5893774b051c5655cf19884eafacfaf2aa7517",
+      "adapter_sha256": "37928a28d67a5a8350f3b49450fc6945c3ffe05c09da7ea0de36136b4a6a4b96"
+    },
+    "local_baseline_runs": {
+      "files": [
+        "private\\kaggle_difficulty\\runs0\\difficulty\\shard-00-of-03\\baseline\\runs.jsonl",
+        "private\\kaggle_difficulty\\runs1\\difficulty\\shard-01-of-03\\baseline\\runs.jsonl",
+        "private\\kaggle_difficulty\\runs2\\difficulty\\shard-02-of-03\\baseline\\runs.jsonl"
+      ],
+      "sha256": {
+        "private\\kaggle_difficulty\\runs0\\difficulty\\shard-00-of-03\\baseline\\runs.jsonl": "73fed899d34e598e6ccb5f71a114d3aecfecd121a02e4d8c29feeff1da52b66d",
+        "private\\kaggle_difficulty\\runs1\\difficulty\\shard-01-of-03\\baseline\\runs.jsonl": "0d9bef4da8b891d1be8b2e46d962cd6b6b92459614d8e771e40e5d939a3f1350",
+        "private\\kaggle_difficulty\\runs2\\difficulty\\shard-02-of-03\\baseline\\runs.jsonl": "df2cde0af285ab6860240f58300f52c57c17969a3b2ea83e1fc5f0ddcf025500"
+      }
+    },
+    "clean_heldout_report": {
+      "path": "docs\\evidence\\clean_heldout_统计.json",
+      "sha256": "b4b2fcdf1714f8146b08587769f45ca8740a7c9ffe3a0988ce0c129d0c3af3d5"
+    }
+  },
+  "preflight": {
+    "summary_path": "private\\api_ab\\preflight_script\\summary.json",
+    "summary": {
+      "version": "api-local-ab-run-v1",
+      "run_date": "2026-10-26",
+      "model_requested": "deepseek-v4.1-flash",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "task_manifest_sha256": "20e20b3beabaf0c48c00dae56d97c1aea356b1ac89c4cdb0fd9decc799c4fa5b",
+      "source_runs_sha256": "3081fbd00bd02ce836e2bd6a5d75f593fdb9ba03f7057fff5f585e8f8c0af226",
+      "tasks_requested": 1,
+      "tasks_with_valid_rollouts": 1,
+      "rollouts_requested": 10,
+      "rollouts_valid": 1,
+      "error_rows": 0,
+      "errors_by_task": {},
+      "equal_task_success_rate": 1.0,
+      "pooled_success_rate": 1.0,
+      "stable_tasks": 0,
+      "stable_rate": 0.0,
+      "within_steps_equal_task_rate": 1.0,
+      "tool_selection_equal_task_rate": 1.0,
+      "api_requests": 2,
+      "api_tool_call_requests": 1,
+      "api_fenced_json_turns": 0,
+      "api_model_versions": [
+        "deepseek-v4.1-flash"
+      ],
+      "prompt_tokens": 3280,
+      "completion_tokens": 298,
+      "total_tokens": 3578,
+      "request_latency_median_s": 6.843999999999999,
+      "request_latency_p95_s": 11.312499999999998,
+      "rollout_latency_median_s": 13.8,
+      "rollout_latency_p95_s": 13.8,
+      "per_task": [
+        {
+          "task_id": "PUB-XLAM-00001",
+          "valid": 1,
+          "success": 1,
+          "success_rate": 1.0,
+          "within_steps": 1,
+          "tool_selection_ok": 1,
+          "stable": false
+        }
+      ],
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "seed": null,
+      "seed_note": "not_sent; API-side sampling variance remains",
+      "concurrency": 1,
+      "system_variant": "s0",
+      "tasks_file": "private\\final_test_v3\\tasks.jsonl",
+      "train_file": "private\\sft_data_v5\\train.jsonl"
+    },
+    "selected_api_model_reason": "The exact unqualified `deepseek-v3` alias returned 404; `vanchin/deepseek-v3` returned 400 because the marketplace product is not activated; `deepseek-v4.1-flash` is the available same-family teacher API and returned native tool_calls in the end-to-end probe."
+  },
+  "judge": {
+    "path": "scripts\\unified_eval.py",
+    "sha256": "51812ec6641c521f982e7bd5128c68b05cbb9bd778f901012953f3c2e019cce2",
+    "commit": "9b235ef525e73a419c7ab532def6e04683da329d"
+  },
+  "model_probe": {
+    "date": "2026-10-26",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "results": [
+      {
+        "model": "deepseek-v3",
+        "http_status": 404,
+        "result": "model_not_found",
+        "selected": false
+      },
+      {
+        "model": "vanchin/deepseek-v3",
+        "http_status": 400,
+        "result": "product_not_activated",
+        "selected": false
+      },
+      {
+        "model": "deepseek-v4.1-flash",
+        "http_status": 200,
+        "native_tool_calls": true,
+        "selected": true
+      },
+      {
+        "model": "qwen-max",
+        "http_status": 200,
+        "native_tool_calls": true,
+        "selected": false
+      }
+    ]
+  },
+  "sampling": {
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "seed": null,
+    "seed_note": "API seed was not sent; API-side sampling variance remains.",
+    "system_variant": "s0",
+    "judge": "scripts/unified_eval.py::judge/run_once"
+  },
+  "api_protocol": {
+    "api_requests": 1052,
+    "api_tool_call_requests": 532,
+    "api_fenced_json_turns": 40,
+    "error_rows": 0,
+    "within_steps_equal_task_rate": 1.0,
+    "tool_selection_equal_task_rate": 1.0
+  },
+  "three_groups": {
+    "api": {
+      "model": "deepseek-v4.1-flash",
+      "valid_rollouts": 450,
+      "equal_task_success_rate": 0.9088888888888887,
+      "pooled_success_rate": 0.9088888888888889,
+      "stable_tasks": 44,
+      "within_steps_rate": 1.0,
+      "tool_selection_rate": 1.0
+    },
+    "local_baseline": {
+      "valid_rollouts": 360,
+      "equal_task_success_rate": 0.49444444444444446,
+      "pooled_success_rate": 0.49444444444444446,
+      "stable_tasks": null,
+      "within_steps_rate": 0.9527777777777777,
+      "tool_selection_rate": 0.9916666666666667
+    },
+    "local_sft": {
+      "valid_rollouts": 450,
+      "equal_task_success_rate": 0.9977777777777778,
+      "pooled_success_rate": 0.9977777777777778,
+      "stable_tasks": 45,
+      "within_steps_rate": 1.0,
+      "tool_selection_rate": 1.0
+    }
+  },
+  "metrics": {
+    "task_success": {
+      "api_equal_task_rate": 0.9088888888888887,
+      "local_sft_equal_task_rate": 0.9977777777777778,
+      "effect_local_minus_api_pp": 8.888888888888902,
+      "api_pooled_rate": 0.9088888888888889,
+      "local_sft_pooled_rate": 0.9977777777777778,
+      "rollout_mcnemar": {
+        "metric": "task_success",
+        "paired_rollouts": 450,
+        "baseline_fail_sft_pass": 41,
+        "baseline_pass_sft_fail": 1,
+        "discordant_rollouts": 42,
+        "p_two_sided": 1.9554136088117957e-11,
+        "p_holm": 5.866240826435387e-11
+      },
+      "task_rate_mcnemar": {
+        "metric": "task_success",
+        "sft_better_tasks": 20,
+        "sft_worse_tasks": 1,
+        "tied_tasks": 24,
+        "discordant_tasks": 21,
+        "p_two_sided": 2.09808349609375e-05,
+        "p_sft_better": 1.049041748046875e-05,
+        "better_task_ids": [
+          "PUB-XLAM-00001",
+          "PUB-XLAM-00003",
+          "PUB-XLAM-00023",
+          "PUB-XLAM-00031",
+          "PUB-XLAM-00042",
+          "PUB-XLAM-00046",
+          "PUB-XLAM-00058",
+          "PUB-XLAM-00078",
+          "PUB-XLAM-00087",
+          "PUB-XLAM-00098",
+          "PUB-XLAM-00102",
+          "U-TR-A-TOOL-HARD",
+          "U-TR4-00-CHECK-BASE",
+          "U-TR4-04-C1-BASE",
+          "U-TR4-16-CHECK-HARD",
+          "U-TR4-17-CHECK-HARD",
+          "U-TR5-05-CHECK-HARD",
+          "U-TR5-10-C1-BASE",
+          "U-TR5-21-CHECK-HARD",
+          "U-TR5-23-CHECK-HARD"
+        ],
+        "worse_task_ids": [
+          "PUB-XLAM-00051"
+        ]
+      },
+      "task_stable_mcnemar": {
+        "metric": "task_success",
+        "stable_threshold": "6/10",
+        "both_stable": 44,
+        "local_only_stable": 1,
+        "api_only_stable": 0,
+        "neither_stable": 0,
+        "discordant_tasks": 1,
+        "p_two_sided": 1.0,
+        "local_only_task_ids": [
+          "U-TR-A-TOOL-HARD"
+        ],
+        "api_only_task_ids": [],
+        "p_holm": 1.0
+      },
+      "paired_task_bootstrap": {
+        "metric": "task_success",
+        "iterations": 1000,
+        "seed": 20261026,
+        "method": "paired_task_cluster_percentile",
+        "tasks_used": 45,
+        "mean": 0.08874444444444445,
+        "ci95_low": 0.04666666666666666,
+        "ci95_high": 0.13338888888888883
+      }
+    },
+    "within_steps": {
+      "api_equal_task_rate": 1.0,
+      "local_sft_equal_task_rate": 1.0,
+      "effect_local_minus_api_pp": 0.0,
+      "api_pooled_rate": 1.0,
+      "local_sft_pooled_rate": 1.0,
+      "rollout_mcnemar": {
+        "metric": "within_steps",
+        "paired_rollouts": 450,
+        "baseline_fail_sft_pass": 0,
+        "baseline_pass_sft_fail": 0,
+        "discordant_rollouts": 0,
+        "p_two_sided": 1.0,
+        "p_holm": 1.0
+      },
+      "task_rate_mcnemar": {
+        "metric": "within_steps",
+        "sft_better_tasks": 0,
+        "sft_worse_tasks": 0,
+        "tied_tasks": 45,
+        "discordant_tasks": 0,
+        "p_two_sided": 1.0,
+        "p_sft_better": 1.0,
+        "better_task_ids": [],
+        "worse_task_ids": []
+      },
+      "task_stable_mcnemar": {
+        "metric": "within_steps",
+        "stable_threshold": "6/10",
+        "both_stable": 45,
+        "local_only_stable": 0,
+        "api_only_stable": 0,
+        "neither_stable": 0,
+        "discordant_tasks": 0,
+        "p_two_sided": 1.0,
+        "local_only_task_ids": [],
+        "api_only_task_ids": [],
+        "p_holm": 1.0
+      },
+      "paired_task_bootstrap": {
+        "metric": "within_steps",
+        "iterations": 1000,
+        "seed": 20261027,
+        "method": "paired_task_cluster_percentile",
+        "tasks_used": 45,
+        "mean": 0.0,
+        "ci95_low": 0.0,
+        "ci95_high": 0.0
+      }
+    },
+    "tool_selection_ok": {
+      "api_equal_task_rate": 1.0,
+      "local_sft_equal_task_rate": 1.0,
+      "effect_local_minus_api_pp": 0.0,
+      "api_pooled_rate": 1.0,
+      "local_sft_pooled_rate": 1.0,
+      "rollout_mcnemar": {
+        "metric": "tool_selection_ok",
+        "paired_rollouts": 450,
+        "baseline_fail_sft_pass": 0,
+        "baseline_pass_sft_fail": 0,
+        "discordant_rollouts": 0,
+        "p_two_sided": 1.0,
+        "p_holm": 1.0
+      },
+      "task_rate_mcnemar": {
+        "metric": "tool_selection_ok",
+        "sft_better_tasks": 0,
+        "sft_worse_tasks": 0,
+        "tied_tasks": 45,
+        "discordant_tasks": 0,
+        "p_two_sided": 1.0,
+        "p_sft_better": 1.0,
+        "better_task_ids": [],
+        "worse_task_ids": []
+      },
+      "task_stable_mcnemar": {
+        "metric": "tool_selection_ok",
+        "stable_threshold": "6/10",
+        "both_stable": 45,
+        "local_only_stable": 0,
+        "api_only_stable": 0,
+        "neither_stable": 0,
+        "discordant_tasks": 0,
+        "p_two_sided": 1.0,
+        "local_only_task_ids": [],
+        "api_only_task_ids": [],
+        "p_holm": 1.0
+      },
+      "paired_task_bootstrap": {
+        "metric": "tool_selection_ok",
+        "iterations": 1000,
+        "seed": 20261028,
+        "method": "paired_task_cluster_percentile",
+        "tasks_used": 45,
+        "mean": 0.0,
+        "ci95_low": 0.0,
+        "ci95_high": 0.0
+      }
+    }
+  },
+  "holm_rollout": {
+    "task_success": 5.866240826435387e-11,
+    "tool_selection_ok": 1.0,
+    "within_steps": 1.0
+  },
+  "holm_task_stable": {
+    "task_success": 1.0,
+    "tool_selection_ok": 1.0,
+    "within_steps": 1.0
+  },
+  "api_vs_local_baseline": {
+    "task_success": {
+      "metric": "task_success",
+      "paired_rollouts": 360,
+      "baseline_fail_sft_pass": 169,
+      "baseline_pass_sft_fail": 18,
+      "discordant_rollouts": 187,
+      "p_two_sided": 5.977273179481008e-32
+    },
+    "within_steps": {
+      "metric": "within_steps",
+      "paired_rollouts": 360,
+      "baseline_fail_sft_pass": 17,
+      "baseline_pass_sft_fail": 0,
+      "discordant_rollouts": 17,
+      "p_two_sided": 1.52587890625e-05
+    },
+    "tool_selection_ok": {
+      "metric": "tool_selection_ok",
+      "paired_rollouts": 360,
+      "baseline_fail_sft_pass": 3,
+      "baseline_pass_sft_fail": 0,
+      "discordant_rollouts": 3,
+      "p_two_sided": 0.25
+    }
+  },
+  "local_sft_vs_local_baseline": {
+    "task_success": {
+      "metric": "task_success",
+      "paired_rollouts": 360,
+      "baseline_fail_sft_pass": 181,
+      "baseline_pass_sft_fail": 0,
+      "discordant_rollouts": 181,
+      "p_two_sided": 6.525304467998525e-55
+    },
+    "within_steps": {
+      "metric": "within_steps",
+      "paired_rollouts": 360,
+      "baseline_fail_sft_pass": 17,
+      "baseline_pass_sft_fail": 0,
+      "discordant_rollouts": 17,
+      "p_two_sided": 1.52587890625e-05
+    },
+    "tool_selection_ok": {
+      "metric": "tool_selection_ok",
+      "paired_rollouts": 360,
+      "baseline_fail_sft_pass": 3,
+      "baseline_pass_sft_fail": 0,
+      "discordant_rollouts": 3,
+      "p_two_sided": 0.25
+    }
+  },
+  "format_attribution": {
+    "official_api_successes": 409,
+    "official_api_failures": 41,
+    "fenced_final_answer_failures": 40,
+    "fenced_json_extractable": 40,
+    "fenced_normalized_passes": 40,
+    "normalized_replay_errors": 0,
+    "normalized_api_successes": 449,
+    "normalized_api_equal_task_rate": 0.9977777777777778,
+    "normalized_api_stable_tasks": 45,
+    "local_sft_successes": 449,
+    "local_sft_equal_task_rate": 0.9977777777777778,
+    "normalized_mcnemar": {
+      "api_fail_sft_pass": 1,
+      "api_pass_sft_fail": 1,
+      "discordant_pairs": 2,
+      "p_two_sided": 1.0
+    },
+    "non_fenced_failures": [
+      {
+        "task_id": "U-TR5-10-C1-BASE",
+        "rollout_index": 9,
+        "failed_checks": [
+          "value_correct"
+        ]
+      }
+    ],
+    "normalized_failures": [],
+    "note": "Post-hoc diagnostic only: the official judge result is unchanged. Each fenced failure was re-judged after extracting the fenced JSON, replaying executed tool calls on the deterministic fixture, and applying the same judge. This separates content correctness from output-contract compliance."
+  },
+  "normalized_content_effect_local_minus_api_pp": 0.0,
+  "latency": {
+    "api": {
+      "api_request_median_s": 1.972,
+      "api_request_p95_s": 4.679499999999996,
+      "api_rollout_median_s": 4.6,
+      "api_rollout_p95_s": 10.3,
+      "environment": "local client -> DashScope compatible endpoint; network latency included"
+    },
+    "local_sft": {
+      "rollout_median_s": 10.5,
+      "gpu_hours": 1.6308333333333351,
+      "environment": "Kaggle T4 14.56GB, offline transformers/NV4"
+    },
+    "local_baseline": {
+      "gpu_hours": 12.78727777777776,
+      "environment": "Kaggle T4 14.56GB, offline transformers/NV4"
+    }
+  },
+  "cost": {
+    "currency": "CNY",
+    "api_prompt_tokens": 1824329,
+    "api_completion_tokens": 104603,
+    "api_total_tokens": 1928932,
+    "api_input_price_per_mtok": null,
+    "api_output_price_per_mtok": null,
+    "api_estimated_cost": null,
+    "api_actual_charge": "not available from API response; calculate from console bill",
+    "local_sft_gpu_hours": 1.6308333333333351,
+    "local_baseline_gpu_hours": 12.78727777777776,
+    "local_gpu_hourly": null,
+    "local_sft_estimated_cost": null,
+    "local_baseline_estimated_cost": null,
+    "local_actual_charge": "0 incremental: Kaggle free T4 quota"
+  },
+  "source_audit": {
+    "api": {
+      "label": "api",
+      "files": [
+        "private\\api_ab\\runs.jsonl"
+      ],
+      "source_sha256": {
+        "private\\api_ab\\runs.jsonl": "80268b058e258f0af87f5be0be863cc28f1e58086aa7b3313a34f46fd3a9572c"
+      },
+      "source_rows": 450,
+      "selected_rows": 450,
+      "tasks_requested": 45,
+      "tasks_with_valid_rollouts": 45,
+      "missing_tasks": [],
+      "error_rows": 0,
+      "errors_by_task": {},
+      "valid_rollouts_by_task": {
+        "PUB-XLAM-00001": 10,
+        "PUB-XLAM-00002": 10,
+        "PUB-XLAM-00003": 10,
+        "PUB-XLAM-00019": 10,
+        "PUB-XLAM-00023": 10,
+        "PUB-XLAM-00028": 10,
+        "PUB-XLAM-00031": 10,
+        "PUB-XLAM-00039": 10,
+        "PUB-XLAM-00042": 10,
+        "PUB-XLAM-00046": 10,
+        "PUB-XLAM-00051": 10,
+        "PUB-XLAM-00052": 10,
+        "PUB-XLAM-00058": 10,
+        "PUB-XLAM-00071": 10,
+        "PUB-XLAM-00076": 10,
+        "PUB-XLAM-00077": 10,
+        "PUB-XLAM-00078": 10,
+        "PUB-XLAM-00079": 10,
+        "PUB-XLAM-00087": 10,
+        "PUB-XLAM-00098": 10,
+        "PUB-XLAM-00102": 10,
+        "U-TR-A-C1-BASE": 10,
+        "U-TR-A-TOOL-HARD": 10,
+        "U-TR-B-C1-HARD": 10,
+        "U-TR-B-TOOL-BASE": 10,
+        "U-TR4-00-C1-HARD": 10,
+        "U-TR4-00-CHECK-BASE": 10,
+        "U-TR4-02-C1-BASE": 10,
+        "U-TR4-03-C1-BASE": 10,
+        "U-TR4-04-C1-BASE": 10,
+        "U-TR4-05-C1-BASE": 10,
+        "U-TR4-06-C1-BASE": 10,
+        "U-TR4-07-C1-BASE": 10,
+        "U-TR4-08-C1-BASE": 10,
+        "U-TR4-16-CHECK-HARD": 10,
+        "U-TR4-17-CHECK-HARD": 10,
+        "U-TR4-19-CHECK-HARD": 10,
+        "U-TR5-00-C1-BASE": 10,
+        "U-TR5-05-CHECK-HARD": 10,
+        "U-TR5-10-C1-BASE": 10,
+        "U-TR5-15-C1-BASE": 10,
+        "U-TR5-18-FILE-BASE": 10,
+        "U-TR5-21-CHECK-HARD": 10,
+        "U-TR5-23-CHECK-HARD": 10,
+        "U-TR5-27-FILE-BASE": 10
+      }
+    },
+    "local_sft": {
+      "label": "local-sft",
+      "files": [
+        "private\\kaggle_pull_clean_heldout_meta\\clean_heldout\\full\\sft\\runs.jsonl"
+      ],
+      "source_sha256": {
+        "private\\kaggle_pull_clean_heldout_meta\\clean_heldout\\full\\sft\\runs.jsonl": "81aad73c6bf35cb54bf6699f5d5893774b051c5655cf19884eafacfaf2aa7517"
+      },
+      "source_rows": 450,
+      "selected_rows": 450,
+      "tasks_requested": 45,
+      "tasks_with_valid_rollouts": 45,
+      "missing_tasks": [],
+      "error_rows": 0,
+      "errors_by_task": {},
+      "valid_rollouts_by_task": {
+        "PUB-XLAM-00001": 10,
+        "PUB-XLAM-00002": 10,
+        "PUB-XLAM-00003": 10,
+        "PUB-XLAM-00019": 10,
+        "PUB-XLAM-00023": 10,
+        "PUB-XLAM-00028": 10,
+        "PUB-XLAM-00031": 10,
+        "PUB-XLAM-00039": 10,
+        "PUB-XLAM-00042": 10,
+        "PUB-XLAM-00046": 10,
+        "PUB-XLAM-00051": 10,
+        "PUB-XLAM-00052": 10,
+        "PUB-XLAM-00058": 10,
+        "PUB-XLAM-00071": 10,
+        "PUB-XLAM-00076": 10,
+        "PUB-XLAM-00077": 10,
+        "PUB-XLAM-00078": 10,
+        "PUB-XLAM-00079": 10,
+        "PUB-XLAM-00087": 10,
+        "PUB-XLAM-00098": 10,
+        "PUB-XLAM-00102": 10,
+        "U-TR-A-C1-BASE": 10,
+        "U-TR-A-TOOL-HARD": 10,
+        "U-TR-B-C1-HARD": 10,
+        "U-TR-B-TOOL-BASE": 10,
+        "U-TR4-00-C1-HARD": 10,
+        "U-TR4-00-CHECK-BASE": 10,
+        "U-TR4-02-C1-BASE": 10,
+        "U-TR4-03-C1-BASE": 10,
+        "U-TR4-04-C1-BASE": 10,
+        "U-TR4-05-C1-BASE": 10,
+        "U-TR4-06-C1-BASE": 10,
+        "U-TR4-07-C1-BASE": 10,
+        "U-TR4-08-C1-BASE": 10,
+        "U-TR4-16-CHECK-HARD": 10,
+        "U-TR4-17-CHECK-HARD": 10,
+        "U-TR4-19-CHECK-HARD": 10,
+        "U-TR5-00-C1-BASE": 10,
+        "U-TR5-05-CHECK-HARD": 10,
+        "U-TR5-10-C1-BASE": 10,
+        "U-TR5-15-C1-BASE": 10,
+        "U-TR5-18-FILE-BASE": 10,
+        "U-TR5-21-CHECK-HARD": 10,
+        "U-TR5-23-CHECK-HARD": 10,
+        "U-TR5-27-FILE-BASE": 10
+      }
+    },
+    "local_baseline": {
+      "label": "local-baseline",
+      "files": [
+        "private\\kaggle_difficulty\\runs0\\difficulty\\shard-00-of-03\\baseline\\runs.jsonl",
+        "private\\kaggle_difficulty\\runs1\\difficulty\\shard-01-of-03\\baseline\\runs.jsonl",
+        "private\\kaggle_difficulty\\runs2\\difficulty\\shard-02-of-03\\baseline\\runs.jsonl"
+      ],
+      "source_sha256": {
+        "private\\kaggle_difficulty\\runs0\\difficulty\\shard-00-of-03\\baseline\\runs.jsonl": "73fed899d34e598e6ccb5f71a114d3aecfecd121a02e4d8c29feeff1da52b66d",
+        "private\\kaggle_difficulty\\runs1\\difficulty\\shard-01-of-03\\baseline\\runs.jsonl": "0d9bef4da8b891d1be8b2e46d962cd6b6b92459614d8e771e40e5d939a3f1350",
+        "private\\kaggle_difficulty\\runs2\\difficulty\\shard-02-of-03\\baseline\\runs.jsonl": "df2cde0af285ab6860240f58300f52c57c17969a3b2ea83e1fc5f0ddcf025500"
+      },
+      "source_rows": 3272,
+      "selected_rows": 360,
+      "tasks_requested": 45,
+      "tasks_with_valid_rollouts": 45,
+      "missing_tasks": [],
+      "error_rows": 0,
+      "errors_by_task": {},
+      "valid_rollouts_by_task": {
+        "PUB-XLAM-00001": 8,
+        "PUB-XLAM-00002": 8,
+        "PUB-XLAM-00003": 8,
+        "PUB-XLAM-00019": 8,
+        "PUB-XLAM-00023": 8,
+        "PUB-XLAM-00028": 8,
+        "PUB-XLAM-00031": 8,
+        "PUB-XLAM-00039": 8,
+        "PUB-XLAM-00042": 8,
+        "PUB-XLAM-00046": 8,
+        "PUB-XLAM-00051": 8,
+        "PUB-XLAM-00052": 8,
+        "PUB-XLAM-00058": 8,
+        "PUB-XLAM-00071": 8,
+        "PUB-XLAM-00076": 8,
+        "PUB-XLAM-00077": 8,
+        "PUB-XLAM-00078": 8,
+        "PUB-XLAM-00079": 8,
+        "PUB-XLAM-00087": 8,
+        "PUB-XLAM-00098": 8,
+        "PUB-XLAM-00102": 8,
+        "U-TR-A-C1-BASE": 8,
+        "U-TR-A-TOOL-HARD": 8,
+        "U-TR-B-C1-HARD": 8,
+        "U-TR-B-TOOL-BASE": 8,
+        "U-TR4-00-C1-HARD": 8,
+        "U-TR4-00-CHECK-BASE": 8,
+        "U-TR4-02-C1-BASE": 8,
+        "U-TR4-03-C1-BASE": 8,
+        "U-TR4-04-C1-BASE": 8,
+        "U-TR4-05-C1-BASE": 8,
+        "U-TR4-06-C1-BASE": 8,
+        "U-TR4-07-C1-BASE": 8,
+        "U-TR4-08-C1-BASE": 8,
+        "U-TR4-16-CHECK-HARD": 8,
+        "U-TR4-17-CHECK-HARD": 8,
+        "U-TR4-19-CHECK-HARD": 8,
+        "U-TR5-00-C1-BASE": 8,
+        "U-TR5-05-CHECK-HARD": 8,
+        "U-TR5-10-C1-BASE": 8,
+        "U-TR5-15-C1-BASE": 8,
+        "U-TR5-18-FILE-BASE": 8,
+        "U-TR5-21-CHECK-HARD": 8,
+        "U-TR5-23-CHECK-HARD": 8,
+        "U-TR5-27-FILE-BASE": 8
+      }
+    }
+  },
+  "scope": {
+    "generalization": "within_family_instance",
+    "family_overlap": {
+      "train_file": "private\\sft_data_v6\\train.jsonl",
+      "heldout_tasks": 45,
+      "heldout_tasks_with_same_family_in_train": 45,
+      "heldout_families": {
+        "01": 2,
+        "03": 7,
+        "json_constraints": 13,
+        "path_params": 2,
+        "public_grep": 21
+      },
+      "train_v6_tasks_by_family": {
+        "01": 7,
+        "02": 5,
+        "03": 54,
+        "conflict": 59,
+        "context_recall": 57,
+        "json_constraints": 38,
+        "path_params": 58,
+        "public_grep": 71
+      },
+      "train_v6_rows_by_family": {
+        "01": 7,
+        "02": 5,
+        "03": 64,
+        "conflict": 89,
+        "context_recall": 65,
+        "json_constraints": 38,
+        "path_params": 62,
+        "public_grep": 71
+      },
+      "per_task": [
+        {
+          "task_id": "PUB-XLAM-00001",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00002",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00003",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00019",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00023",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00028",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00031",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00039",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00042",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00046",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00051",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00052",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00058",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00071",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00076",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00077",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00078",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00079",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00087",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00098",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "PUB-XLAM-00102",
+          "family": "public_grep",
+          "train_v6_same_family_tasks": 71,
+          "train_v6_same_family_rows": 71
+        },
+        {
+          "task_id": "U-TR-A-C1-BASE",
+          "family": "json_constraints",
+          "train_v6_same_family_tasks": 38,
+          "train_v6_same_family_rows": 38
+        },
+        {
+          "task_id": "U-TR-A-TOOL-HARD",
+          "family": "path_params",
+          "train_v6_same_family_tasks": 58,
+          "train_v6_same_family_rows": 62
+        },
+        {
+          "task_id": "U-TR-B-C1-HARD",
+          "family": "json_constraints",
+          "train_v6_same_family_tasks": 38,
+          "train_v6_same_family_rows": 38
+        },
+        {
+          "task_id": "U-TR-B-TOOL-BASE",
+          "family": "path_params",
+          "train_v6_same_family_tasks": 58,
+          "train_v6_same_family_rows": 62
+        },
+        {
+          "task_id": "U-TR4-00-C1-HARD",
+          "family": "json_constraints",
+          "train_v6_same_family_tasks": 38,
+          "train_v6_same_family_rows": 38
+        },
+        {
+          "task_id": "U-TR4-00-CHECK-BASE",
+          "family": "03",
+          "train_v6_same_family_tasks": 54,
+          "train_v6_same_family_rows": 64
+        },
+        {
+          "task_id": "U-TR4-02-C1-BASE",
+          "family": "json_constraints",
+          "train_v6_same_family_tasks": 38,
+          "train_v6_same_family_rows": 38
+        },
+        {
+          "task_id": "U-TR4-03-C1-BASE",
+          "family": "json_constraints",
+          "train_v6_same_family_tasks": 38,
+          "train_v6_same_family_rows": 38
+        },
+        {
+          "task_id": "U-TR4-04-C1-BASE",
+          "family": "json_constraints",
+          "train_v6_same_family_tasks": 38,
+          "train_v6_same_family_rows": 38
+        },
+        {
+          "task_id": "U-TR4-05-C1-BASE",
+          "family": "json_constraints",
+          "train_v6_same_family_tasks": 38,
+          "train_v6_same_family_rows": 38
+        },
+        {
+          "task_id": "U-TR4-06-C1-BASE",
+          "family": "json_constraints",
+          "train_v6_same_family_tasks": 38,
+          "train_v6_same_family_rows": 38
+        },
+        {
+          "task_id": "U-TR4-07-C1-BASE",
+          "family": "json_constraints",
+          "train_v6_same_family_tasks": 38,
+          "train_v6_same_family_rows": 38
+        },
+        {
+          "task_id": "U-TR4-08-C1-BASE",
+          "family": "json_constraints",
+          "train_v6_same_family_tasks": 38,
+          "train_v6_same_family_rows": 38
+        },
+        {
+          "task_id": "U-TR4-16-CHECK-HARD",
+          "family": "03",
+          "train_v6_same_family_tasks": 54,
+          "train_v6_same_family_rows": 64
+        },
+        {
+          "task_id": "U-TR4-17-CHECK-HARD",
+          "family": "03",
+          "train_v6_same_family_tasks": 54,
+          "train_v6_same_family_rows": 64
+        },
+        {
+          "task_id": "U-TR4-19-CHECK-HARD",
+          "family": "03",
+          "train_v6_same_family_tasks": 54,
+          "train_v6_same_family_rows": 64
+        },
+        {
+          "task_id": "U-TR5-00-C1-BASE",
+          "family": "json_constraints",
+          "train_v6_same_family_tasks": 38,
+          "train_v6_same_family_rows": 38
+        },
+        {
+          "task_id": "U-TR5-05-CHECK-HARD",
+          "family": "03",
+          "train_v6_same_family_tasks": 54,
+          "train_v6_same_family_rows": 64
+        },
+        {
+          "task_id": "U-TR5-10-C1-BASE",
+          "family": "json_constraints",
+          "train_v6_same_family_tasks": 38,
+          "train_v6_same_family_rows": 38
+        },
+        {
+          "task_id": "U-TR5-15-C1-BASE",
+          "family": "json_constraints",
+          "train_v6_same_family_tasks": 38,
+          "train_v6_same_family_rows": 38
+        },
+        {
+          "task_id": "U-TR5-18-FILE-BASE",
+          "family": "01",
+          "train_v6_same_family_tasks": 7,
+          "train_v6_same_family_rows": 7
+        },
+        {
+          "task_id": "U-TR5-21-CHECK-HARD",
+          "family": "03",
+          "train_v6_same_family_tasks": 54,
+          "train_v6_same_family_rows": 64
+        },
+        {
+          "task_id": "U-TR5-23-CHECK-HARD",
+          "family": "03",
+          "train_v6_same_family_tasks": 54,
+          "train_v6_same_family_rows": 64
+        },
+        {
+          "task_id": "U-TR5-27-FILE-BASE",
+          "family": "01",
+          "train_v6_same_family_tasks": 7,
+          "train_v6_same_family_rows": 7
+        }
+      ],
+      "scope": "within_family_instance"
+    },
+    "prompt_overlap": {
+      "train_file": "private\\sft_data_v6\\train.jsonl",
+      "tasks": 45,
+      "exact_prompt_overlap_tasks": 13,
+      "normalized_prompt_overlap_tasks": 23,
+      "per_task": [
+        {
+          "task_id": "PUB-XLAM-00001",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00002",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00003",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00019",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00023",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00028",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00031",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00039",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00042",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00046",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00051",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00052",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00058",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00071",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00076",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00077",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00078",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00079",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00087",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00098",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "PUB-XLAM-00102",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "U-TR-A-C1-BASE",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR-A-TOOL-HARD",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": false
+        },
+        {
+          "task_id": "U-TR-B-C1-HARD",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR-B-TOOL-BASE",
+          "exact_prompt_overlap": true,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR4-00-C1-HARD",
+          "exact_prompt_overlap": true,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR4-00-CHECK-BASE",
+          "exact_prompt_overlap": true,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR4-02-C1-BASE",
+          "exact_prompt_overlap": true,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR4-03-C1-BASE",
+          "exact_prompt_overlap": true,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR4-04-C1-BASE",
+          "exact_prompt_overlap": true,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR4-05-C1-BASE",
+          "exact_prompt_overlap": true,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR4-06-C1-BASE",
+          "exact_prompt_overlap": true,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR4-07-C1-BASE",
+          "exact_prompt_overlap": true,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR4-08-C1-BASE",
+          "exact_prompt_overlap": true,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR4-16-CHECK-HARD",
+          "exact_prompt_overlap": true,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR4-17-CHECK-HARD",
+          "exact_prompt_overlap": true,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR4-19-CHECK-HARD",
+          "exact_prompt_overlap": true,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR5-00-C1-BASE",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR5-05-CHECK-HARD",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR5-10-C1-BASE",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR5-15-C1-BASE",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR5-18-FILE-BASE",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR5-21-CHECK-HARD",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR5-23-CHECK-HARD",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": true
+        },
+        {
+          "task_id": "U-TR5-27-FILE-BASE",
+          "exact_prompt_overlap": false,
+          "normalized_prompt_overlap": true
+        }
+      ]
+    },
+    "note": "The 45 diagnostic tasks are not cross-template held-out. The result supports same-family instance behavior only, not general coding ability."
+  },
+  "per_task": [
+    {
+      "task_id": "PUB-XLAM-00001",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 9,
+      "api_valid": 10,
+      "local_baseline_success": 4,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 9.999999999999998
+    },
+    {
+      "task_id": "PUB-XLAM-00002",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "PUB-XLAM-00003",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 9,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 9.999999999999998
+    },
+    {
+      "task_id": "PUB-XLAM-00019",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 4,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "PUB-XLAM-00023",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 9,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 9.999999999999998
+    },
+    {
+      "task_id": "PUB-XLAM-00028",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "PUB-XLAM-00031",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 7,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 30.000000000000004
+    },
+    {
+      "task_id": "PUB-XLAM-00039",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "PUB-XLAM-00042",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 9,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 9.999999999999998
+    },
+    {
+      "task_id": "PUB-XLAM-00046",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 7,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 30.000000000000004
+    },
+    {
+      "task_id": "PUB-XLAM-00051",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 4,
+      "local_baseline_valid": 8,
+      "local_sft_success": 9,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": -9.999999999999998
+    },
+    {
+      "task_id": "PUB-XLAM-00052",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "PUB-XLAM-00058",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 8,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 19.999999999999996
+    },
+    {
+      "task_id": "PUB-XLAM-00071",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "PUB-XLAM-00076",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "PUB-XLAM-00077",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 4,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "PUB-XLAM-00078",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 7,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 30.000000000000004
+    },
+    {
+      "task_id": "PUB-XLAM-00079",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "PUB-XLAM-00087",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 9,
+      "api_valid": 10,
+      "local_baseline_success": 4,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 9.999999999999998
+    },
+    {
+      "task_id": "PUB-XLAM-00098",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 9,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 9.999999999999998
+    },
+    {
+      "task_id": "PUB-XLAM-00102",
+      "family": "public_grep",
+      "category": "TOOL",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 8,
+      "api_valid": 10,
+      "local_baseline_success": 4,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 19.999999999999996
+    },
+    {
+      "task_id": "U-TR-A-C1-BASE",
+      "family": "json_constraints",
+      "category": "BASE",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR-A-TOOL-HARD",
+      "family": "path_params",
+      "category": "TOOL",
+      "difficulty": "strong",
+      "training_overlap": true,
+      "api_success": 5,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 50.0
+    },
+    {
+      "task_id": "U-TR-B-C1-HARD",
+      "family": "json_constraints",
+      "category": "HARD",
+      "difficulty": "strong",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR-B-TOOL-BASE",
+      "family": "path_params",
+      "category": "TOOL",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR4-00-C1-HARD",
+      "family": "json_constraints",
+      "category": "HARD",
+      "difficulty": "strong",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR4-00-CHECK-BASE",
+      "family": "03",
+      "category": "HARD",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 8,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 19.999999999999996
+    },
+    {
+      "task_id": "U-TR4-02-C1-BASE",
+      "family": "json_constraints",
+      "category": "BASE",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR4-03-C1-BASE",
+      "family": "json_constraints",
+      "category": "BASE",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR4-04-C1-BASE",
+      "family": "json_constraints",
+      "category": "BASE",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 9,
+      "api_valid": 10,
+      "local_baseline_success": 4,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 9.999999999999998
+    },
+    {
+      "task_id": "U-TR4-05-C1-BASE",
+      "family": "json_constraints",
+      "category": "BASE",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR4-06-C1-BASE",
+      "family": "json_constraints",
+      "category": "BASE",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 4,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR4-07-C1-BASE",
+      "family": "json_constraints",
+      "category": "BASE",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR4-08-C1-BASE",
+      "family": "json_constraints",
+      "category": "BASE",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 4,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR4-16-CHECK-HARD",
+      "family": "03",
+      "category": "HARD",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 6,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 40.0
+    },
+    {
+      "task_id": "U-TR4-17-CHECK-HARD",
+      "family": "03",
+      "category": "HARD",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 9,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 9.999999999999998
+    },
+    {
+      "task_id": "U-TR4-19-CHECK-HARD",
+      "family": "03",
+      "category": "HARD",
+      "difficulty": "medium",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR5-00-C1-BASE",
+      "family": "json_constraints",
+      "category": "BASE",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 4,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR5-05-CHECK-HARD",
+      "family": "03",
+      "category": "HARD",
+      "difficulty": "strong",
+      "training_overlap": true,
+      "api_success": 6,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 40.0
+    },
+    {
+      "task_id": "U-TR5-10-C1-BASE",
+      "family": "json_constraints",
+      "category": "BASE",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 9,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 9.999999999999998
+    },
+    {
+      "task_id": "U-TR5-15-C1-BASE",
+      "family": "json_constraints",
+      "category": "BASE",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 4,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR5-18-FILE-BASE",
+      "family": "01",
+      "category": "BASE",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    },
+    {
+      "task_id": "U-TR5-21-CHECK-HARD",
+      "family": "03",
+      "category": "HARD",
+      "difficulty": "strong",
+      "training_overlap": true,
+      "api_success": 8,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 19.999999999999996
+    },
+    {
+      "task_id": "U-TR5-23-CHECK-HARD",
+      "family": "03",
+      "category": "HARD",
+      "difficulty": "strong",
+      "training_overlap": true,
+      "api_success": 8,
+      "api_valid": 10,
+      "local_baseline_success": 5,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 19.999999999999996
+    },
+    {
+      "task_id": "U-TR5-27-FILE-BASE",
+      "family": "01",
+      "category": "BASE",
+      "difficulty": "weak",
+      "training_overlap": true,
+      "api_success": 10,
+      "api_valid": 10,
+      "local_baseline_success": 3,
+      "local_baseline_valid": 8,
+      "local_sft_success": 10,
+      "local_sft_valid": 10,
+      "local_minus_api_pp": 0.0
+    }
+  ],
+  "branch": "local_sft_exceeds_api_on_strict_output_contract",
+  "conclusion": "严格固定输出契约下，本地 7B SFT 在 45 个受限任务上显著超过 API baseline（效应量 +8.9pp，Holm p=5.866e-11，95% CI [+4.7, +13.3]pp）。失败归因显示 40/41 次 API 失败是最终答案被 fenced JSON 包裹；离线去除 fence 后 40/40 通过同一 judge，内容级 API≈99.8% vs SFT≈99.8%（post-hoc McNemar p=1）。因此这是输出契约可靠性的优势，不能写成任务内容推理优势。"
+}

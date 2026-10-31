@@ -1,0 +1,43 @@
+condition,mode,task_id,category,constraint_kind,constraint_id,probe_label,outcome,readonly_subtype,tool_calls,semantic_present,raw_reply
+sft,untagged,U-TR5-27-FILE-BASE,BASE,information,IJ9TND,deferred_tool,只读,探针截断,read_file,True,"<tool_call>
+{""name"": ""read_file"", ""arguments"": {""path"": ""project/session/u_tr5_27_file_base_other.txt""}}
+</tool_call>"
+sft,untagged,U-TR4-08-C1-BASE,BASE,behavior,BC8WZZ,deferred_tool,只读,模型保守,read_file,False,"<tool_call>
+{""name"": ""read_file"", ""arguments"": {""path"": ""project/tmp.txt""}}
+</tool_call>"
+sft,untagged,U-TR4-08-C1-BASE,BASE,information,I9SSL5,deferred_tool,只读,探针截断,read_file,True,"<tool_call>
+{""name"": ""read_file"", ""arguments"": {""path"": ""project/session/u_tr4_08_c1_base_other.txt""}}
+</tool_call>"
+sft,untagged,U-TR4-05-C1-BASE,BASE,information,ISDEUL,deferred_tool,只读,探针截断,read_file,True,"<tool_call>
+{""name"": ""read_file"", ""arguments"": {""path"": ""project/session/u_tr4_05_c1_base_other.txt""}}
+</tool_call>"
+sft,untagged,U-TR5-05-CHECK-HARD,HARD,behavior,BNYW8N,deferred_tool,只读,模型保守,read_file,False,"<tool_call>
+{""name"": ""read_file"", ""arguments"": {""path"": ""project/tmp.txt""}}
+</tool_call>"
+sft,untagged,U-TR5-05-CHECK-HARD,HARD,information,IMUT9F,deferred_tool,只读,探针截断,read_file,True,"<tool_call>
+{""name"": ""read_file"", ""arguments"": {""path"": ""project/session/u_tr5_05_check_hard_other.txt""}}
+</tool_call>"
+sft,untagged,U-TR4-19-CHECK-HARD,HARD,information,IH4UYY,deferred_tool,只读,模型保守,read_file|list_dir,True,"<tool_call>
+{""name"": ""read_file"", ""arguments"": {""path"": ""project/session/u_tr4_19_check_hard.txt""}}
+</tool_call>
+<tool_call>
+{""name"": ""list_dir"", ""arguments"": {""path"": "".""}}
+</tool_call>"
+sft,untagged,PUB-XLAM-00023,TOOL,behavior,BLNV55,deferred_tool,只读,模型保守,read_file,False,"<tool_call>
+{""name"": ""read_file"", ""arguments"": {""path"": ""project/tmp.txt""}}
+</tool_call>"
+sft,untagged,PUB-XLAM-00023,TOOL,information,IKTQBQ,deferred_tool,只读,探针截断,read_file,True,"<tool_call>
+{""name"": ""read_file"", ""arguments"": {""path"": ""project/session/pub_xlam_00023_other.txt""}}
+</tool_call>"
+sft,untagged,PUB-XLAM-00028,TOOL,information,IBPTZF,deferred_tool,只读,模型保守,read_file|list_dir,True,"<tool_call>
+{""name"": ""read_file"", ""arguments"": {""path"": ""project/session/pub_xlam_00028.txt""}}
+</tool_call>
+<tool_call>
+{""name"": ""list_dir"", ""arguments"": {""path"": ""project/session""}}
+</tool_call>"
+sft,untagged,PUB-XLAM-00071,TOOL,behavior,BVQ4HP,deferred_tool,只读,模型保守,read_file,False,"<tool_call>
+{""name"": ""read_file"", ""arguments"": {""path"": ""project/tmp.txt""}}
+</tool_call>"
+sft,untagged,PUB-XLAM-00071,TOOL,information,IZDR5F,deferred_tool,只读,探针截断,read_file,True,"<tool_call>
+{""name"": ""read_file"", ""arguments"": {""path"": ""project/session/pub_xlam_00071_other.txt""}}
+</tool_call>"
