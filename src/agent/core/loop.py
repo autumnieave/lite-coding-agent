@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from agent.core.compaction import SUMMARY_PREFIX, Compactor
 from agent.core.constraints import SYSTEM_PROMPT_HEADING, ConstraintStore
+from agent.core.context import estimate_message_tokens, estimate_tokens
 from agent.core.llm import (
     BaseProvider,
     TextCallback,
@@ -25,6 +26,7 @@ from agent.core.llm import (
     tool_result_message,
     user_message,
 )
+from agent.core.runtime_guard import RuntimeGuard
 
 COMPLETED = "completed"
 MAX_TURNS_REACHED = "max_turns"
@@ -166,6 +168,7 @@ class AgentLoop:
         constraints: ConstraintStore | None = None,
         max_consecutive_failures: int = DEFAULT_MAX_CONSECUTIVE_FAILURES,
         on_tool_failure: Callable[[str], bool] | None = None,
+        runtime_guard: RuntimeGuard | None = None,
     ) -> None:
         """`on_event` 接收工具进度，`on_text` 接收模型增量输出。
 
@@ -178,6 +181,10 @@ class AgentLoop:
         `on_tool_failure` 是连续失败升级时的人工确认钩子：收到一段说明，返回 True 表示
         继续让模型尝试，返回 False 表示放弃本次任务。不传（CI / 管道场景）就退化为
         只把「换个策略」的提示交给模型，与 `cli` 层危险命令确认的降级先例一致。
+
+        `runtime_guard` 传了就启用轮数 / deadline / Token 预算的循环级检查；为 None 时
+        行为与之前完全一致。工具级白名单与参数 schema 由 `runtime_guard.GuardedExecutor`
+        在装配层包装，两者共用同一份配置。
         """
         if max_turns < 1:
             raise ValueError("max_turns 必须 >= 1")
@@ -193,6 +200,7 @@ class AgentLoop:
         self._constraints = constraints
         self._max_consecutive_failures = max_consecutive_failures
         self._on_tool_failure = on_tool_failure
+        self._runtime_guard = runtime_guard
         self._failures: dict[str, int] = {}
         self._escalated: set[str] = set()
 
@@ -247,19 +255,34 @@ class AgentLoop:
             messages = [system_message(prompt), *carried]
         messages.append(user_message(task))
 
+        guard_session = self._runtime_guard.start() if self._runtime_guard is not None else None
         last_content = ""
         # TODO: Claude Code 有 7 种继续原因，当前只实现第 1 种（模型调工具）。
         # 其余 6 种见 claude-code-from-scratch/docs/01-agent-loop.md:244。Day 6 评估是否补充。
         for turn in range(1, self._max_turns + 1):
+            if guard_session is not None:
+                stop = guard_session.check_turn(turn)
+                if stop is not None:
+                    self._emit(f"RuntimeGuard 终止（{stop.reason}）：{stop.detail}")
+                    return LoopResult(
+                        content=last_content,
+                        turns=turn - 1,
+                        stopped_reason=stop.reason,
+                        messages=tuple(messages),
+                    )
             if self._compactor is not None:
                 messages = await self._compactor.compact(messages)
+            prompt_tokens = estimate_tokens(messages) if guard_session is not None else 0
             response = await self._provider.chat_stream(
                 messages, tools=self._tools.specs(), on_text=self._on_text
             )
             if self._compactor is not None:
                 self._compactor.note_api_call()
-            messages.append(assistant_message(response.content, response.tool_calls))
+            assistant = assistant_message(response.content, response.tool_calls)
+            messages.append(assistant)
             last_content = response.content
+            if guard_session is not None:
+                guard_session.record_usage(prompt_tokens, estimate_message_tokens(assistant))
 
             if not response.tool_calls:
                 return LoopResult(
@@ -269,12 +292,34 @@ class AgentLoop:
                     messages=tuple(messages),
                 )
 
+            # 任务还没结束，先结算预算；超限就停在这里，不再执行这一轮的工具。
+            if guard_session is not None:
+                stop = guard_session.check_tokens()
+                if stop is not None:
+                    self._emit(f"RuntimeGuard 终止（{stop.reason}）：{stop.detail}")
+                    return LoopResult(
+                        content=response.content,
+                        turns=turn,
+                        stopped_reason=stop.reason,
+                        messages=tuple(messages),
+                    )
+
             # 模型先说了一句话再去调工具：把这一行收尾，
             # 否则下一轮流式输出的文字会接在同一行上。
             if self._on_text is not None and last_content and not last_content.endswith("\n"):
                 self._on_text("\n")
 
             for call in response.tool_calls:
+                if guard_session is not None:
+                    stop = guard_session.check_deadline()
+                    if stop is not None:
+                        self._emit(f"RuntimeGuard 终止（{stop.reason}）：{stop.detail}")
+                        return LoopResult(
+                            content=last_content,
+                            turns=turn,
+                            stopped_reason=stop.reason,
+                            messages=tuple(messages),
+                        )
                 # 先报「开始」再执行：跑长命令时终端不会一直静默
                 self._emit(f"[第 {turn} 轮] 调用 {call.name}({_preview(call.arguments)})")
                 result = await self._tools.execute(

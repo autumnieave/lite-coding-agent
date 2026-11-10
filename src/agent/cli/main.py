@@ -29,6 +29,13 @@ from agent.core.loop import (
     AgentLoop,
     LoopResult,
 )
+from agent.core.runtime_guard import (
+    STOP_DEADLINE,
+    STOP_MAX_TURNS,
+    STOP_TOKEN_BUDGET,
+    GuardedExecutor,
+    RuntimeGuard,
+)
 from agent.mcp.client import McpClient, McpError
 from agent.memory import agents_md
 from agent.memory.session import DEFAULT_FILENAME as SESSION_FILENAME
@@ -56,6 +63,29 @@ def _add_chat_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPar
         type=int,
         default=DEFAULT_MAX_TURNS,
         help="工具调用轮数上限，默认 %(default)s",
+    )
+    parser.add_argument(
+        "--deadline-seconds",
+        type=float,
+        default=None,
+        help="全局运行时长上限（秒）；超时后 RuntimeGuard 终止，默认不限制",
+    )
+    parser.add_argument(
+        "--token-budget",
+        type=int,
+        default=None,
+        help="累计 prompt+completion 的估算 Token 上限；超限后 RuntimeGuard 终止，默认不限制",
+    )
+    parser.add_argument(
+        "--allowed-tools",
+        default=None,
+        metavar="A,B",
+        help="逗号分隔的工具名白名单；设置后白名单外的调用会被拒绝",
+    )
+    parser.add_argument(
+        "--no-arg-schema-check",
+        action="store_true",
+        help="关闭 RuntimeGuard 的参数 schema 校验（需与其它 RuntimeGuard 参数一起使用）",
     )
     parser.add_argument("--root", default=".", help="工作区根目录，默认当前目录")
     parser.add_argument(
@@ -105,6 +135,27 @@ def _tool_reporter(verbose: bool) -> Callable[[str], None]:
         print(f"{prefix}{message}", file=sys.stderr, flush=True)
 
     return report
+
+
+def _parse_allowed_tools(raw: str | None) -> frozenset[str] | None:
+    """解析 ``--allowed-tools``；空值表示不启用白名单。"""
+    if not raw:
+        return None
+    names = [item.strip() for item in raw.split(",") if item.strip()]
+    return frozenset(names) or None
+
+
+def _build_runtime_guard(args: argparse.Namespace) -> RuntimeGuard | None:
+    """按命令行参数构造 RuntimeGuard；一个限制都没设时返回 None（行为不变）。"""
+    allowed = _parse_allowed_tools(args.allowed_tools)
+    if args.deadline_seconds is None and args.token_budget is None and allowed is None:
+        return None
+    return RuntimeGuard(
+        deadline_seconds=args.deadline_seconds,
+        token_budget=args.token_budget,
+        allowed_tools=allowed,
+        validate_arguments=not args.no_arg_schema_check,
+    )
 
 
 class _StreamPrinter:
@@ -389,15 +440,20 @@ def run_chat(args: argparse.Namespace) -> int:
 
     compactor = Compactor(summarize=_summarizer(provider), constraints=store, on_event=reporter)
     registry = build_default_registry(root, approver=_build_approver())
+    runtime_guard = _build_runtime_guard(args)
+    executor: Any = registry
+    if runtime_guard is not None:
+        executor = GuardedExecutor(registry, runtime_guard)
     loop = AgentLoop(
         provider,
-        registry,
+        executor,
         max_turns=args.max_turns,
         on_event=reporter,
         on_text=printer,
         compactor=compactor,
         constraints=store,
         on_tool_failure=_build_retry_approver(),
+        runtime_guard=runtime_guard,
     )
 
     mcp = McpClient(on_event=reporter, constraints=store) if mcp_servers else None
@@ -434,6 +490,13 @@ def run_chat(args: argparse.Namespace) -> int:
     if result.stopped_reason == ABORTED_BY_USER:
         print(
             f"警告：工具连续失败后你选择停止，任务在第 {result.turns} 轮中断。",
+            file=sys.stderr,
+        )
+        return EXIT_TASK_FAILED
+
+    if result.stopped_reason in (STOP_MAX_TURNS, STOP_DEADLINE, STOP_TOKEN_BUDGET):
+        print(
+            f"警告：RuntimeGuard 终止（{result.stopped_reason}），任务在第 {result.turns} 轮停止。",
             file=sys.stderr,
         )
         return EXIT_TASK_FAILED
