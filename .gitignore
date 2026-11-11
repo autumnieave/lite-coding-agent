@@ -48,6 +48,8 @@ private/
 *.pth
 *.bin
 *.whl
+*.tar.gz
+*.zip
 traces/
 kaggle_pull_*/
 tmp_*/

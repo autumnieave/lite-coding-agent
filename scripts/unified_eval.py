@@ -620,8 +620,9 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
         patterns = tuple(str(pattern) for pattern in spec.public_patterns)
         if not patterns:
             raise ValueError(f"{spec.task_id} has no public grep patterns")
+        path = spec.public_path or PUBLIC_GREP_FIXTURE_PATH
         lines = [f"record-{index:03d}: {pattern}" for index, pattern in enumerate(patterns)]
-        _write(root, PUBLIC_GREP_FIXTURE_PATH, "\n".join(lines) + "\n")
+        _write(root, path, "\n".join(lines) + "\n")
         matches = []
         for pattern in patterns:
             line_index = next(
@@ -633,16 +634,13 @@ def build_fixture(spec: UnifiedTaskSpec, root: Path) -> Fixture:
             matches.append(
                 {
                     "pattern": pattern,
-                    "line": (
-                        f"{PUBLIC_GREP_FIXTURE_PATH}:{line_index + 1}:"
-                        f"record-{line_index:03d}: {pattern}"
-                    ),
+                    "line": (f"{path}:{line_index + 1}:record-{line_index:03d}: {pattern}"),
                 }
             )
         return Fixture(
             task_id=spec.task_id,
             kind="public_grep",
-            main_path=PUBLIC_GREP_FIXTURE_PATH,
+            main_path=path,
             expected_json={"matches": matches},
         )
 
